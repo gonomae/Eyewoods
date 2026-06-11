@@ -3,7 +3,7 @@
 import platform
 
 a = Analysis(
-    ['app.py'],
+    ['eyewoods.py'],
     pathex=[],
     binaries=[],
     datas=[],
