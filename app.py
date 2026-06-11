@@ -460,7 +460,7 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(200)
+        self._debounce.setInterval(100)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -507,12 +507,15 @@ class SearchPage(QWidget):
             self._model.set_dataframe(pl.DataFrame())
             return
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
-        matches_df = matches_df.with_columns(pl.col("text").str.replace_all(r"(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
+        matches_df = (matches_df
+            .with_columns(pl.col("text").str.replace_all(r"(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
+            .rename({"episode": "Episode"})
+        )
 
         match_pivot = matches_df.pivot(
             "track_name",
             on_columns=self._config.get_track_names(),
-            index=["id", "Timestamp"],
+            index=["id", "Episode", "Timestamp"],
             values="text",
             aggregate_function="first"
         )
