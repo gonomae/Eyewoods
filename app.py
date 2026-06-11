@@ -172,9 +172,12 @@ class ProjectConfig:
         self.tracks = tracks
 
     @classmethod
-    def from_dict(cls, data):
-        root_path = data.get("root_path", "")
-        tracks = data.get("tracks", [])
+    def from_file(cls, file):
+        with open(file, "rb") as f:
+            config_dict = tomllib.load(f)
+        os.chdir(os.path.dirname(os.path.abspath(file)))
+        root_path = config_dict.get("root_path", "")
+        tracks = config_dict.get("tracks", [])
         tracks = [(track.get("name", ""), track.get("glob", "")) for track in tracks]
         return cls(path=root_path, tracks=tracks)
 
@@ -505,7 +508,7 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(100)
+        self._debounce.setInterval(200)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -715,9 +718,7 @@ class MainWindow(QMainWindow):
     def load_config(self, file):
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
-        with open(file, "rb") as f:
-            config_dict = tomllib.load(f)
-            self.config = ProjectConfig.from_dict(config_dict)
+        self.config = ProjectConfig.from_file(file)
         self._selection_page.update_config(self.config)
 
     def open_file(self):
@@ -742,7 +743,7 @@ class Eyewoods(QApplication):
     def __init__(self, argv):
         super().__init__(argv)
         if len(argv) > 1:
-            self.config = self.config_from_file(argv[1])
+            self.config = ProjectConfig.from_file(argv[1])
         else:
             self.config = ProjectConfig()
 
@@ -751,11 +752,6 @@ class Eyewoods(QApplication):
             self.file_opened.emit(e.file())
             return True
         return super().event(e)
-
-    def config_from_file(self, file):
-        with open(file, "rb") as f:
-            config_dict = tomllib.load(f)
-            return ProjectConfig.from_dict(config_dict)
 
 
 def main():
