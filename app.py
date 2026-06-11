@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QVBoxLayout,
     QHBoxLayout,
-    QTableView,
     QLabel,
     QPushButton,
     QLineEdit,
@@ -31,27 +30,27 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QMessageBox,
     QStyleOptionViewItem,
+    QTreeView,
 )
 from PyQt6.QtCore import (
     Qt,
     QTimer,
     QSize,
-    QRect,
     QEvent,
     pyqtSignal,
-    QAbstractTableModel,
-    QModelIndex,
     QCoreApplication,
     QSettings,
+    QItemSelectionModel,
+    QItemSelection,
 )
 from PyQt6.QtGui import (
-    QColor,
     QTextDocument,
     QTextDocumentFragment,
     QAction,
     QKeySequence,
-    QBrush,
     QPainter,
+    QStandardItemModel,
+    QStandardItem,
 )
 
 
@@ -324,7 +323,7 @@ class FileSelectionPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(350)
+        self._debounce.setInterval(1000)
         self._debounce.timeout.connect(self._update_project_path)
 
         root = QVBoxLayout(self)
@@ -454,10 +453,8 @@ class FileSelectionPage(QWidget):
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
-MERGE_ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
-
-class ResultTableView(QTableView):
+class ResultTreeView(QTreeView):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         copy_action = QAction("&Copy", self)
@@ -476,25 +473,34 @@ class ResultTableView(QTableView):
         QApplication.clipboard().setText(docFrag.toPlainText())
 
 
+class TreeSelectionModel(QItemSelectionModel):
+    def __init__(self, model, parent=None):
+        super().__init__(model, parent)
+
+    def select(self, selection, command):
+        # Normalize to a single index
+        if isinstance(selection, QItemSelection):
+            indexes = selection.indexes()
+            if not indexes:
+                super().select(selection, command)
+                return
+            index = indexes[0]
+        else:
+            index = selection
+
+        if not index.isValid():
+            super().select(selection, command)
+            return
+
+        if index.model().hasChildren(index.siblingAtColumn(0)):
+            command |= QItemSelectionModel.SelectionFlag.Rows
+
+        super().select(selection, command)
+
+
 class ResultItemDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         self.initStyleOption(option, index)
-
-        if index.data(MERGE_ROW_ROLE):
-            if index.column() == 0:
-                view = option.widget
-                total_width = sum(
-                    view.columnWidth(c) for c in range(view.model().columnCount())
-                )
-                merged_rect = QRect(
-                    option.rect.left(),
-                    option.rect.top(),
-                    total_width,
-                    option.rect.height(),
-                )
-                option.rect = merged_rect
-            else:
-                return
 
         painter.save()
 
@@ -519,72 +525,76 @@ class ResultItemDelegate(QStyledItemDelegate):
         self.initStyleOption(option, index)
         doc = QTextDocument()
         doc.setHtml(option.text)
-        doc.setTextWidth(option.rect.width())
+        # Make sure we don't break the first two columns
+        if index.column() >= 2:
+            col_width = option.widget.columnWidth(index.column())
+        else:
+            col_width = -1
+        doc.setTextWidth(col_width)
         return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
 
-class PolarsTableModel(QAbstractTableModel):
-    def __init__(self, df: pl.DataFrame | None, empty_df: pl.DataFrame, parent=None):
+class PolarsTreeModel(QStandardItemModel):
+    def __init__(self, empty_df, parent=None):
         super().__init__(parent)
-        if df is None:
-            self._df = empty_df
-        else:
-            self._df = df
-        self.headers = []
         self._empty_df = empty_df
+        self.set_dataframe(self._empty_df)
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else self._df.height
+    def _get_or_create_path(self, group: str) -> QStandardItem:
+        """
+        Walk (and create if needed) the chain of items for each
+        slash-separated segment, returning the deepest one.
+        """
+        segments = group.split("/")
+        parent = self.invisibleRootItem()
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else self._df.width
+        for segment in segments:
+            item = self._find_child(parent, segment)
+            if item is None:
+                item = QStandardItem(segment)
+                row = [item] + [QStandardItem() for _ in self._leaf_cols]
+                parent.appendRow(row)
+            parent = item
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-
-        if role == Qt.ItemDataRole.DisplayRole:
-            if index.row() in self.headers["row_id"]:
-                if index.column() == 0:
-                    return self.headers.filter(pl.col("row_id") == index.row())[
-                        "Episode"
-                    ].item()
-                else:
-                    return None
-            value = self._df[index.row(), index.column()]
-            return str(value) if value is not None else ""
-
-        if role == Qt.ItemDataRole.BackgroundRole:
-            if index.row() in self.headers["row_id"]:
-                return QBrush(QColor(PANEL_BG))
-
-        if role == MERGE_ROW_ROLE:
-            return index.row() in self.headers["row_id"]
-
-        return None
-
-    def headerData(
-        self,
-        section: int,
-        orientation: Qt.Orientation,
-        role: int = Qt.ItemDataRole.DisplayRole,
-    ):
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-        if orientation == Qt.Orientation.Horizontal:
-            return self._df.columns[section]
-        return str(section)  # row numbers
+        return parent
 
     def set_dataframe(self, df: pl.DataFrame | None) -> None:
         """Replace the displayed DataFrame and refresh the view."""
+        self.clear()
         self.layoutAboutToBeChanged.emit()
         self.beginResetModel()
+
         if df is None:
-            self._df = self._empty_df
-        else:
-            self._df = df
+            df = self._empty_df
+
+        group_col = "episode"
+        self._leaf_cols = [c for c in df.columns if c != group_col]
+        headers = [group_col] + self._leaf_cols
+        headers[0] = "Episode"
+        headers[1] = "Timestamp"
+        self.setHorizontalHeaderLabels(headers)
+
+        for group in df[group_col].unique(maintain_order=True):
+            parent_item = self._get_or_create_path(str(group))
+
+            for df_row in (
+                df.filter(pl.col(group_col) == group)
+                .select(self._leaf_cols)
+                .iter_rows()
+            ):
+                child_row = [QStandardItem()] + [QStandardItem(str(v)) for v in df_row]
+                parent_item.appendRow(child_row)
         self.endResetModel()
         self.layoutChanged.emit()
+
+    @staticmethod
+    def _find_child(parent: QStandardItem, text: str) -> QStandardItem | None:
+        """Return the first col-0 child whose text matches, or None."""
+        for row in range(parent.rowCount()):
+            child = parent.child(row, 0)
+            if child and child.text() == text:
+                return child
+        return None
 
 
 class SearchPage(QWidget):
@@ -598,6 +608,7 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
+        self._debounce.setInterval(0)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -612,50 +623,56 @@ class SearchPage(QWidget):
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("Type to search…")
         self._search_box.setFixedHeight(42)
-        self._search_box.textChanged.connect(self._on_query_change)
+        self._search_box.textChanged.connect(self._debounce.start)
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
-        empty_model_data = {"Timestamp": []}
+        empty_model_data = {"episode": [], "timestamp": []}
         for name in self._config.get_track_names():
             empty_model_data[name] = []
-        self._model = PolarsTableModel(None, pl.DataFrame(empty_model_data))
+        empty_df = pl.DataFrame(empty_model_data)
 
-        self.table = ResultTableView()
-        self.table.setItemDelegate(ResultItemDelegate())
-        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self.table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
-        self.table.horizontalHeader().setMinimumSectionSize(0)
-        self.table.setWordWrap(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._model.layoutChanged.connect(self.table.resizeRowsToContents)
-        self.table.setModel(self._model)
-        self.table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
+        self._model = PolarsTreeModel(empty_df)
+        self._model.modelReset.connect(self._apply_column_sizing)
+        self.tree = ResultTreeView()
+        self.tree.setItemDelegate(ResultItemDelegate())
+        self.tree.setModel(self._model)
+        self.tree.setSelectionModel(TreeSelectionModel(self._model))
+        self.tree.setSelectionBehavior(QTreeView.SelectionBehavior.SelectItems)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setMinimumSectionSize(0)
+        self.tree.setWordWrap(True)
+        self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._apply_column_sizing()
 
-        root.addWidget(self.table, 1)
+        root.addWidget(self.tree, 1)
 
         self._search_box.setFocus()
 
-    def _on_query_change(self):
-        query = self._search_box.text().strip()
-        if len(query) == 0:
-            self._model.set_dataframe(None)
-            return
-        elif len(query) <= 1:
-            delay = 800
-        elif len(query) <= 2:
-            delay = 250
-        elif len(query) >= 3:
-            delay = 10
-        self._debounce.start(delay)
+    def _apply_column_sizing(self):
+        episode_doc = QTextDocument()
+        episode_doc.setHtml("Episode")
+        episode_width = episode_doc.idealWidth()
+        for ep in self._event_df["episode"].unique():
+            episode_doc.setHtml(ep)
+            if episode_doc.idealWidth() > episode_width:
+                episode_width = episode_doc.idealWidth()
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.tree.setColumnWidth(
+            0, int(episode_width) + 16
+        )  # + space for padding and expand arrow
+
+        time_doc = QTextDocument()
+        time_doc.setHtml("Timestamp")
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.tree.setColumnWidth(1, int(time_doc.idealWidth()))
 
     def _run_search(self):
         query = self._search_box.text().strip()
+
+        if len(query) == 0:
+            self._model.set_dataframe(None)
+            return
 
         matches_df = self._event_df.lazy().filter(
             pl.col("text").str.to_lowercase().str.contains(str.lower(query))
@@ -665,12 +682,12 @@ class SearchPage(QWidget):
                 r"(?i)(" + re.escape(query) + ")",
                 f'<span style="color:{TEXT_MATCH};font-weight:bold;">$1</span>',
             )
-        ).rename({"episode": "Episode"})
+        )
 
         match_pivot = matches_df.pivot(
             "track_name",
             on_columns=self._config.get_track_names(),
-            index=["id", "Episode", "Timestamp"],
+            index=["id", "episode", "timestamp"],
             values="text",
             aggregate_function="first",
         )
@@ -685,32 +702,20 @@ class SearchPage(QWidget):
             ),
         )
 
-        merged_df = match_pivot.update(
-            overlap_pivot,
-            on="id",
-            how="full",
-        ).sort("id")
-
-        transitions = (
-            merged_df.filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1)))
-            .with_columns(header=pl.lit(True))
-            .sort("id")
-        )
-        result_df = (
-            transitions.merge_sorted(
-                merged_df.with_columns(header=pl.lit(False)),
-                key="id",
-                maintain_order=True,
+        merged_df = (
+            match_pivot.update(
+                overlap_pivot,
+                on="id",
+                how="full",
             )
-            .with_row_index("row_id")
-            .collect()
-        )
+            .sort("id")
+            .drop("id")
+        ).collect()
 
-        headers = result_df.filter(pl.col("header")).select(["row_id", "Episode"])
-        trimmed_df = result_df.drop(["row_id", "id", "Episode", "header"])
+        self._model.set_dataframe(merged_df)
 
-        self._model.headers = headers
-        self._model.set_dataframe(trimmed_df)
+        if merged_df.height < 100:
+            self.tree.expandAll()
 
 
 # ─── Main window ──────────────────────────────────────────────────────────────
@@ -827,9 +832,9 @@ class MainWindow(QMainWindow):
         )
         event_df = (
             event_df.join(overlaps_df, on="id", how="left")
-            .with_columns(pl.col("start").dt.total_seconds().alias("Timestamp"))
+            .with_columns(pl.col("start").dt.total_seconds().alias("timestamp"))
             .with_columns(
-                pl.col("Timestamp").map_elements(
+                pl.col("timestamp").map_elements(
                     lambda s: f"{s // 3_600}:{(s % 3_600) // 60:02d}:{(s % 60):02d}",
                     return_dtype=pl.String,
                 )
@@ -838,7 +843,7 @@ class MainWindow(QMainWindow):
         )
 
         search_page = SearchPage(self.config, event_df)
-        self.copy_action.triggered.connect(search_page.table.copy_selection)
+        self.copy_action.triggered.connect(search_page.tree.copy_selection)
 
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
