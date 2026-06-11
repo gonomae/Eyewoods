@@ -6,14 +6,10 @@ import re
 import glob
 from pathlib import Path
 from datetime import timedelta
-import argparse
 import ass
 import srt
-from typing import Any, Callable, TypedDict
-import re
 import tomllib
 import polars as pl
-import polars.selectors as cs
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -22,12 +18,10 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QTableView,
     QLabel,
     QPushButton,
     QLineEdit,
-    QTextEdit,
     QHeaderView,
     QFileDialog,
     QScrollArea,
@@ -35,8 +29,8 @@ from PyQt6.QtWidgets import (
     QStyle,
     QMenu,
     QStackedWidget,
-    QProgressDialog,
     QMessageBox,
+    QStyleOptionViewItem,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -51,16 +45,13 @@ from PyQt6.QtCore import (
     QSettings,
 )
 from PyQt6.QtGui import (
-    QFont,
     QColor,
-    QPalette,
-    QIcon,
     QTextDocument,
     QTextDocumentFragment,
-    QStandardItem,
     QAction,
     QKeySequence,
     QBrush,
+    QPainter,
 )
 
 
@@ -225,7 +216,7 @@ class ProjectConfig:
     def get_track_names(self) -> list:
         names = []
         for name, _ in self.tracks:
-            if not name in names:
+            if name not in names:
                 names.append(name)
         return names
 
@@ -256,7 +247,7 @@ def resolve_pattern(root_dir: str, pattern: str) -> list:
 class PathRowWidget(QWidget):
     remove_requested = pyqtSignal(object)
 
-    def __init__(self, project_config, glob=None, track_name=None, parent=None):
+    def __init__(self, project_config, track_glob=None, track_name=None, parent=None):
         super().__init__(parent)
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
@@ -272,7 +263,7 @@ class PathRowWidget(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
-        self.file_line = QLineEdit(glob)
+        self.file_line = QLineEdit(track_glob)
         self.file_line.setFixedHeight(32)
         self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
@@ -404,8 +395,8 @@ class FileSelectionPage(QWidget):
 
         root.addLayout(bar)
 
-        for name, glob in self.project_config.tracks:
-            self._add_row(glob=glob, track_name=name)
+        for name, track_glob in self.project_config.tracks:
+            self._add_row(track_glob=track_glob, track_name=name)
 
     def update_config(self, config):
         self.project_config = config
@@ -414,13 +405,16 @@ class FileSelectionPage(QWidget):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows = []
-        for name, glob in self.project_config.tracks:
-            self._add_row(glob=glob, track_name=name)
+        for name, track_glob in self.project_config.tracks:
+            self._add_row(track_glob=track_glob, track_name=name)
         self.confirm_btn.setEnabled(len(self._rows) > 0)
 
-    def _add_row(self, checked=False, glob=None, track_name=None):
+    def _add_row(self, checked=False, track_glob=None, track_name=None):
         row = PathRowWidget(
-            self.project_config, glob=glob, track_name=track_name, parent=self
+            self.project_config,
+            track_glob=track_glob,
+            track_name=track_name,
+            parent=self,
         )
         row.remove_requested.connect(self._remove_row)
         idx = self._rows_layout.count() - 1
@@ -765,8 +759,8 @@ class MainWindow(QMainWindow):
     def _on_confirm(self):
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
-        for i, (name, glob) in enumerate(self.config.tracks):
-            paths = [Path(p) for p in resolve_pattern(self.config.path, glob)]
+        for i, (name, track_glob) in enumerate(self.config.tracks):
+            paths = [Path(p) for p in resolve_pattern(self.config.path, track_glob)]
             for path in paths:
                 episode_path = str(path.parent)
                 try:
