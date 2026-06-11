@@ -8,4 +8,5 @@ dependencies = [
     "ass>=1.0.3",
     "polars>=1.41.2",
     "pyqt6>=6.10.2",
+    "srt>=3.5.3",
 ]

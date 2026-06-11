@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import timedelta
 import argparse
 import ass
+import srt
 from typing import Any, Callable, TypedDict
 import re
 import tomllib
@@ -612,6 +613,18 @@ class MainWindow(QMainWindow):
                                     episode_path,
                                     name,
                                     event.name
+                                ))
+                        elif path.suffix == ".srt":
+                            parsed_srt = srt.parse(f)
+                            for line_index, event in enumerate(parsed_srt):
+                                all_events.append((
+                                    event.start,
+                                    event.end,
+                                    event.content,
+                                    line_index,
+                                    episode_path,
+                                    name,
+                                    None
                                 ))
                         else:
                             print(f"Unrecognized file type for {path}")
