@@ -38,7 +38,7 @@ ACCENT       = "#4f8ef7"
 ACCENT_DIM   = "#2d5ab5"
 TEXT_MAIN    = "#e8eaf0"
 TEXT_DIM     = "#7a7f94"
-TEXT_MATCH   = "#f7c948"
+TEXT_MATCH   = "#ef5f5f"
 DANGER       = "#e05c5c"
 SUCCESS      = "#4ecb71"
 
@@ -369,7 +369,7 @@ class FileSelectionPage(QWidget):
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
 class ResultCell(QFrame):
-    def __init__(self, events, query, event_df, parent=None):
+    def __init__(self, events, query, is_match, event_df, parent=None):
         super().__init__(parent)
         self._events = events
         self._query = query
@@ -380,7 +380,15 @@ class ResultCell(QFrame):
         self._layout.setSpacing(0)
 
         for event in self._events:
-            text_line = QLabel(event["text"])
+            text = event["text"]
+            if is_match:
+                text = re.sub(
+                    f'({re.escape(query)})',
+                    f'<span style="color:{TEXT_MATCH};font-weight:bold;">\\1</span>',
+                    text,
+                    flags=re.IGNORECASE
+                )
+            text_line = QLabel(text)
             text_line.setWordWrap(True)
             text_line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             self._layout.addWidget(text_line)
@@ -445,21 +453,21 @@ class SearchPage(QWidget):
             .group_by("id")
             .agg(pl.col("overlap_id"))
             .sort("id")
-            .with_row_index("match_id")
+            .with_row_index("match_index")
             .drop("overlap_id")
             .join(matches_df, on="id")
         ).collect()
 
         match_count = 0
         if not matches_df.is_empty():
-            match_count = matches_df.select("match_id").max().item() + 1
+            match_count = matches_df.select("match_index").max().item() + 1
         if match_count > 0:
             overlaps_df = (matches_df
-                .select(["match_id", "overlap_id"])
+                .select(["match_index", "overlap_id"])
                 .rename({"overlap_id": "id"})
                 .join(self._event_df, on="id")
             )
-            results_df = pl.concat([matches_df, overlaps_df]).unique(subset="id")
+            results_df = pl.concat([matches_df, overlaps_df]).unique(subset="id").sort("id")
 
             for i, name in enumerate(self._config.tracks.keys()):
                 label = QLabel(name)
@@ -467,16 +475,17 @@ class SearchPage(QWidget):
                 self._results_layout.addWidget(label, 0, i)
 
             row = 1
-            for match_id in range(match_count):
-                row_df = matches_df.filter((pl.col("match_id") == match_id))
-                timestamp = row_df.select("start").item(0, 0)
+            for match_index in range(match_count):
+                row_matches_df = matches_df.filter((pl.col("match_index") == match_index))
+                timestamp = row_matches_df.select("start").item(0, 0)
                 time_label = QLabel(str(timestamp).split(".", 1)[0])
                 time_label.setObjectName("timestamp")
                 self._results_layout.addWidget(time_label, row, 0, 1, -1)
                 row += 1
                 for col, track_name in enumerate(self._config.tracks.keys()):
-                    cell_df = results_df.filter((pl.col("match_id") == match_id) & (pl.col("track_name") == track_name))
-                    cell = ResultCell(cell_df.to_dicts(), self._current_query, self._event_df)
+                    cell_df = results_df.filter((pl.col("match_index") == match_index) & (pl.col("track_name") == track_name))
+                    cell_id = cell_df.select("id").item(0, 0)
+                    cell = ResultCell(cell_df.to_dicts(), self._current_query, cell_id in matches_df["id"], self._event_df)
                     self._results_layout.addWidget(cell, row, col)
                 row += 1
             self._results_layout.setRowStretch(row, 1)
