@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-File Search App — PyQt6
-Select files, edit paths with wildcards/number placeholders,
-then search their contents with SQLite FTS5.
-"""
 
 import sys
 import os
@@ -18,6 +13,7 @@ from typing import Any, Callable, TypedDict
 import re
 import tomllib
 import polars as pl
+import polars.selectors as cs
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStyledItemDelegate,
@@ -26,7 +22,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QFrame, QStyle,
     QStackedWidget, QProgressDialog, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
+from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence
 
 
@@ -404,9 +400,24 @@ class FileSelectionPage(QWidget):
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
+MERGE_ROW_ROLE = Qt.ItemDataRole.UserRole + 1
+
 class ResultItemDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         self.initStyleOption(option, index)
+
+        if index.data(MERGE_ROW_ROLE):
+            if index.column() == 0:
+                view = option.widget
+                total_width = sum(
+                    view.columnWidth(c) for c in range(view.model().columnCount())
+                )
+                merged_rect = QRect(option.rect.left(), option.rect.top(), total_width, option.rect.height())
+                option.rect = merged_rect
+            else:
+                return
+
+
         painter.save()
 
         doc = QTextDocument()
@@ -421,7 +432,7 @@ class ResultItemDelegate(QStyledItemDelegate):
 
         # Clip and translate painter to cell bounds
         painter.translate(option.rect.topLeft())
-        painter.setClipRect(0, 0, option.rect.width(), option.rect.height() )
+        painter.setClipRect(0, 0, option.rect.width(), option.rect.height())
         doc.drawContents(painter)
 
         painter.restore()
@@ -437,6 +448,7 @@ class PolarsTableModel(QAbstractTableModel):
     def __init__(self, df: pl.DataFrame, parent=None):
         super().__init__(parent)
         self._df = df
+        self.merged_rows = []
  
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.height
@@ -449,8 +461,12 @@ class PolarsTableModel(QAbstractTableModel):
             return None
  
         if role == Qt.ItemDataRole.DisplayRole:
+            if index.row() in self.merged_rows and index.column() != 0:
+                return None
             value = self._df[index.row(), index.column()]
             return str(value) if value is not None else ""
+        if role == MERGE_ROW_ROLE:
+            return index.row() in self.merged_rows
   
         return None
  
@@ -521,8 +537,6 @@ class SearchPage(QWidget):
 
         self._search_box.setFocus()
 
-    # ── search entry point ────────────────────────────────────────────────────
-
     def _run_search(self):
         query = self._search_box.text().strip()
         if query == "":
@@ -550,12 +564,22 @@ class SearchPage(QWidget):
             aggregate_function=pl.when(pl.element().count() > 0).then(pl.element().str.join("<br/>"))
         )
 
-        result_df = match_pivot.update(
+        merged_df = match_pivot.update(
             overlap_pivot,
             on="id",
             how="full",
-        ).drop("id").collect()
+        ).sort("id")
 
+        transitions = merged_df.filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1))).with_columns(pl.col("id") - 0.5)
+        result_df = (pl
+            .concat([merged_df.cast({"id": pl.Float64}).drop("Episode"), transitions], how="diagonal")
+            .sort("id")
+            .drop("id")
+            .select(["Episode", cs.exclude("Episode")])
+            .collect()
+        )
+
+        self._model.merged_rows = result_df["Episode"].is_not_null().arg_true()
         self._model.set_dataframe(result_df)
         
 
