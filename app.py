@@ -16,29 +16,67 @@ import polars as pl
 import polars.selectors as cs
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QStyledItemDelegate,
-    QVBoxLayout, QHBoxLayout, QGridLayout, QTableView,
-    QLabel, QPushButton, QLineEdit, QTextEdit, QHeaderView,
-    QFileDialog, QScrollArea, QFrame, QStyle, QMenu,
-    QStackedWidget, QProgressDialog, QMessageBox,
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QStyledItemDelegate,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QTableView,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QTextEdit,
+    QHeaderView,
+    QFileDialog,
+    QScrollArea,
+    QFrame,
+    QStyle,
+    QMenu,
+    QStackedWidget,
+    QProgressDialog,
+    QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex, QCoreApplication, QSettings
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QTextDocumentFragment, QStandardItem, QAction, QKeySequence, QBrush
+from PyQt6.QtCore import (
+    Qt,
+    QTimer,
+    QSize,
+    QRect,
+    QEvent,
+    pyqtSignal,
+    QAbstractTableModel,
+    QModelIndex,
+    QCoreApplication,
+    QSettings,
+)
+from PyQt6.QtGui import (
+    QFont,
+    QColor,
+    QPalette,
+    QIcon,
+    QTextDocument,
+    QTextDocumentFragment,
+    QStandardItem,
+    QAction,
+    QKeySequence,
+    QBrush,
+)
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
 
-DARK_BG      = "#0f1117"
-PANEL_BG     = "#171b26"
-CARD_BG      = "#1e2231"
-BORDER       = "#2a2f42"
-ACCENT       = "#4f8ef7"
-ACCENT_DIM   = "#2d5ab5"
-TEXT_MAIN    = "#e8eaf0"
-TEXT_DIM     = "#7a7f94"
-TEXT_MATCH   = "#ef5f5f"
-DANGER       = "#e05c5c"
-SUCCESS      = "#4ecb71"
+DARK_BG = "#0f1117"
+PANEL_BG = "#171b26"
+CARD_BG = "#1e2231"
+BORDER = "#2a2f42"
+ACCENT = "#4f8ef7"
+ACCENT_DIM = "#2d5ab5"
+TEXT_MAIN = "#e8eaf0"
+TEXT_DIM = "#7a7f94"
+TEXT_MATCH = "#ef5f5f"
+DANGER = "#e05c5c"
+SUCCESS = "#4ecb71"
 
 QSS = f"""
 QWidget {{
@@ -144,6 +182,8 @@ QLabel#hint {{
 
 
 """
+
+
 class SubtitleEvent:
     def __init__(
         self,
@@ -162,11 +202,12 @@ class SubtitleEvent:
         self.track_name = track_name
         self.actor = actor
 
+
 class ProjectConfig:
     def __init__(
         self,
         path: str = "",
-        tracks: list[tuple[[str, str]]] = [], # [("Name", path)]
+        tracks: list[tuple[[str, str]]] = [],  # [("Name", path)]
     ) -> None:
         self.path = path
         self.tracks = tracks
@@ -188,18 +229,29 @@ class ProjectConfig:
                 names.append(name)
         return names
 
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def resolve_pattern(root_dir: str, pattern: str) -> list:
     """Return sorted list of files matched by pattern."""
     try:
-        matches = sorted(glob.glob("**/" + pattern, root_dir=os.path.expanduser(root_dir), recursive=True))
+        matches = sorted(
+            glob.glob(
+                "**/" + pattern, root_dir=os.path.expanduser(root_dir), recursive=True
+            )
+        )
     except Exception:
         return []
-    return [p for p in matches if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))]
+    return [
+        p
+        for p in matches
+        if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))
+    ]
 
 
 # ─── Page 1: File Selection ───────────────────────────────────────────────────
+
 
 class PathRowWidget(QWidget):
     remove_requested = pyqtSignal(object)
@@ -260,7 +312,9 @@ class PathRowWidget(QWidget):
             text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
             if len(files) > 4:
                 text += f"  … +{len(files) - 4} more"
-            self.preview.setText(f"{text}   ({len(files)} file{'s' if len(files)!=1 else ''})")
+            self.preview.setText(
+                f"{text}   ({len(files)} file{'s' if len(files) != 1 else ''})"
+            )
 
     def get_file_glob(self):
         return self.file_line.text().strip()
@@ -295,9 +349,7 @@ class FileSelectionPage(QWidget):
         hint_frame.setObjectName("card")
         hint_layout = QVBoxLayout(hint_frame)
         hint_layout.setContentsMargins(14, 10, 14, 10)
-        hint = QLabel(
-            "<b>Wildcard syntax:</b>  <code>*</code> matches anything"
-        )
+        hint = QLabel("<b>Wildcard syntax:</b>  <code>*</code> matches anything")
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
         hint.setObjectName("hint")
@@ -352,7 +404,7 @@ class FileSelectionPage(QWidget):
 
         root.addLayout(bar)
 
-        for (name, glob) in self.project_config.tracks:
+        for name, glob in self.project_config.tracks:
             self._add_row(glob=glob, track_name=name)
 
     def update_config(self, config):
@@ -362,13 +414,14 @@ class FileSelectionPage(QWidget):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows = []
-        for (name, glob) in self.project_config.tracks:
+        for name, glob in self.project_config.tracks:
             self._add_row(glob=glob, track_name=name)
         self.confirm_btn.setEnabled(len(self._rows) > 0)
 
-
     def _add_row(self, checked=False, glob=None, track_name=None):
-        row = PathRowWidget(self.project_config, glob=glob, track_name=track_name, parent=self)
+        row = PathRowWidget(
+            self.project_config, glob=glob, track_name=track_name, parent=self
+        )
         row.remove_requested.connect(self._remove_row)
         idx = self._rows_layout.count() - 1
         self._rows_layout.insertWidget(idx, row)
@@ -384,7 +437,9 @@ class FileSelectionPage(QWidget):
             self.confirm_btn.setEnabled(False)
 
     def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "All files (*.*)")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select files", "", "All files (*.*)"
+        )
         for p in paths:
             self._add_row(p)
 
@@ -397,13 +452,16 @@ class FileSelectionPage(QWidget):
         self.project_config.path = self.project_path.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
-            self.project_config.tracks.append((row.get_track_name(), row.get_file_glob()))
+            self.project_config.tracks.append(
+                (row.get_track_name(), row.get_file_glob())
+            )
         self.confirm_requested.emit()
 
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
 MERGE_ROW_ROLE = Qt.ItemDataRole.UserRole + 1
+
 
 class ResultTableView(QTableView):
     def contextMenuEvent(self, event):
@@ -423,6 +481,7 @@ class ResultTableView(QTableView):
         docFrag = QTextDocumentFragment.fromHtml(index.data())
         QApplication.clipboard().setText(docFrag.toPlainText())
 
+
 class ResultItemDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         self.initStyleOption(option, index)
@@ -433,7 +492,12 @@ class ResultItemDelegate(QStyledItemDelegate):
                 total_width = sum(
                     view.columnWidth(c) for c in range(view.model().columnCount())
                 )
-                merged_rect = QRect(option.rect.left(), option.rect.top(), total_width, option.rect.height())
+                merged_rect = QRect(
+                    option.rect.left(),
+                    option.rect.top(),
+                    total_width,
+                    option.rect.height(),
+                )
                 option.rect = merged_rect
             else:
                 return
@@ -464,7 +528,8 @@ class ResultItemDelegate(QStyledItemDelegate):
         doc.setTextWidth(option.rect.width())
         return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
-class PolarsTableModel(QAbstractTableModel): 
+
+class PolarsTableModel(QAbstractTableModel):
     def __init__(self, df: pl.DataFrame | None, empty_df: pl.DataFrame, parent=None):
         super().__init__(parent)
         if df is None:
@@ -473,21 +538,23 @@ class PolarsTableModel(QAbstractTableModel):
             self._df = df
         self.headers = []
         self._empty_df = empty_df
- 
+
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.height
- 
+
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.width
- 
+
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
- 
+
         if role == Qt.ItemDataRole.DisplayRole:
             if index.row() in self.headers["row_id"]:
                 if index.column() == 0:
-                    return self.headers.filter(pl.col("row_id") == index.row())["Episode"].item()
+                    return self.headers.filter(pl.col("row_id") == index.row())[
+                        "Episode"
+                    ].item()
                 else:
                     return None
             value = self._df[index.row(), index.column()]
@@ -499,16 +566,20 @@ class PolarsTableModel(QAbstractTableModel):
 
         if role == MERGE_ROW_ROLE:
             return index.row() in self.headers["row_id"]
-  
+
         return None
- 
-    def headerData(self, section: int, orientation: Qt.Orientation,
-                   role: int = Qt.ItemDataRole.DisplayRole):
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
             return self._df.columns[section]
-        return str(section)   # row numbers
+        return str(section)  # row numbers
 
     def set_dataframe(self, df: pl.DataFrame | None) -> None:
         """Replace the displayed DataFrame and refresh the view."""
@@ -545,9 +616,7 @@ class SearchPage(QWidget):
         root.addSpacing(16)
 
         self._search_box = QLineEdit()
-        self._search_box.setPlaceholderText(
-            'Type to search…'
-        )
+        self._search_box.setPlaceholderText("Type to search…")
         self._search_box.setFixedHeight(42)
         self._search_box.textChanged.connect(self._on_query_change)
         root.addWidget(self._search_box)
@@ -561,14 +630,18 @@ class SearchPage(QWidget):
         self.table = ResultTableView()
         self.table.setItemDelegate(ResultItemDelegate())
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
         self.table.horizontalHeader().setMinimumSectionSize(0)
         self.table.setWordWrap(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._model.layoutChanged.connect(self.table.resizeRowsToContents)
         self.table.setModel(self._model)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
 
         root.addWidget(self.table, 1)
 
@@ -587,22 +660,25 @@ class SearchPage(QWidget):
             delay = 10
         self._debounce.start(delay)
 
-
     def _run_search(self):
         query = self._search_box.text().strip()
 
-        matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
-        matches_df = (matches_df
-            .with_columns(pl.col("text").str.replace_all(r"(?i)(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
-            .rename({"episode": "Episode"})
+        matches_df = self._event_df.lazy().filter(
+            pl.col("text").str.to_lowercase().str.contains(str.lower(query))
         )
+        matches_df = matches_df.with_columns(
+            pl.col("text").str.replace_all(
+                r"(?i)(" + re.escape(query) + ")",
+                f'<span style="color:{TEXT_MATCH};font-weight:bold;">$1</span>',
+            )
+        ).rename({"episode": "Episode"})
 
         match_pivot = matches_df.pivot(
             "track_name",
             on_columns=self._config.get_track_names(),
             index=["id", "Episode", "Timestamp"],
             values="text",
-            aggregate_function="first"
+            aggregate_function="first",
         )
 
         overlap_pivot = matches_df.pivot(
@@ -610,7 +686,9 @@ class SearchPage(QWidget):
             on_columns=self._config.get_track_names(),
             index="id",
             values="overlap_text",
-            aggregate_function=pl.when(pl.element().count() > 0).then(pl.element().str.join("<br/>"))
+            aggregate_function=pl.when(pl.element().count() > 0).then(
+                pl.element().str.join("<br/>")
+            ),
         )
 
         merged_df = match_pivot.update(
@@ -619,13 +697,17 @@ class SearchPage(QWidget):
             how="full",
         ).sort("id")
 
-        transitions = (merged_df
-            .filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1)))
+        transitions = (
+            merged_df.filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1)))
             .with_columns(header=pl.lit(True))
             .sort("id")
         )
-        result_df = (transitions
-            .merge_sorted(merged_df.with_columns(header=pl.lit(False)), key="id", maintain_order=True)
+        result_df = (
+            transitions.merge_sorted(
+                merged_df.with_columns(header=pl.lit(False)),
+                key="id",
+                maintain_order=True,
+            )
             .with_row_index("row_id")
             .collect()
         )
@@ -635,10 +717,10 @@ class SearchPage(QWidget):
 
         self._model.headers = headers
         self._model.set_dataframe(trimmed_df)
-        
 
 
 # ─── Main window ──────────────────────────────────────────────────────────────
+
 
 class MainWindow(QMainWindow):
     def __init__(self, config):
@@ -688,31 +770,35 @@ class MainWindow(QMainWindow):
             for path in paths:
                 episode_path = str(path.parent)
                 try:
-                    with open(root_path / path, encoding='utf_8_sig') as f:
+                    with open(root_path / path, encoding="utf_8_sig") as f:
                         if path.suffix == ".ass":
                             parsed_ass = ass.parse(f)
                             for line_index, event in enumerate(parsed_ass.events):
-                                all_events.append((
-                                    event.start,
-                                    event.end,
-                                    event.text,
-                                    line_index,
-                                    episode_path,
-                                    name,
-                                    event.name
-                                ))
+                                all_events.append(
+                                    (
+                                        event.start,
+                                        event.end,
+                                        event.text,
+                                        line_index,
+                                        episode_path,
+                                        name,
+                                        event.name,
+                                    )
+                                )
                         elif path.suffix == ".srt":
                             parsed_srt = srt.parse(f)
                             for line_index, event in enumerate(parsed_srt):
-                                all_events.append((
-                                    event.start,
-                                    event.end,
-                                    event.content,
-                                    line_index,
-                                    episode_path,
-                                    name,
-                                    None
-                                ))
+                                all_events.append(
+                                    (
+                                        event.start,
+                                        event.end,
+                                        event.content,
+                                        line_index,
+                                        episode_path,
+                                        name,
+                                        None,
+                                    )
+                                )
                         else:
                             print(f"Unrecognized file type for {path}")
                             pass
@@ -730,30 +816,28 @@ class MainWindow(QMainWindow):
                 "episode": pl.String,
                 "track_name": pl.String,
                 "actor": pl.String,
-                },
-            orient="row"
+            },
+            orient="row",
         ).lazy()
         event_df = event_df.with_row_index("id")
-        overlaps_df = (event_df
-            .join(event_df, how="cross")
+        overlaps_df = (
+            event_df.join(event_df, how="cross")
             .filter(
-                (pl.col("track_name") != pl.col("track_name_right")) &
-                (pl.col("episode") == pl.col("episode_right")) &
-                (pl.col("start") <= pl.col("end_right")) &
-                (pl.col("start_right") <= pl.col("end"))
+                (pl.col("track_name") != pl.col("track_name_right"))
+                & (pl.col("episode") == pl.col("episode_right"))
+                & (pl.col("start") <= pl.col("end_right"))
+                & (pl.col("start_right") <= pl.col("end"))
             )
             .rename({"text_right": "overlap_text", "track_name_right": "overlap_track"})
             .select(["id", "overlap_text", "overlap_track"])
         )
-        event_df = (event_df
-            .join(overlaps_df, on="id", how="left")
-            .with_columns(
-                pl.col("start").dt.total_seconds().alias("Timestamp")
-            )
+        event_df = (
+            event_df.join(overlaps_df, on="id", how="left")
+            .with_columns(pl.col("start").dt.total_seconds().alias("Timestamp"))
             .with_columns(
                 pl.col("Timestamp").map_elements(
                     lambda s: f"{s // 3_600}:{(s % 3_600) // 60:02d}:{(s % 60):02d}",
-                    return_dtype=pl.String
+                    return_dtype=pl.String,
                 )
             )
             .collect()
@@ -773,10 +857,7 @@ class MainWindow(QMainWindow):
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Open File",
-            "",
-            "Eyewoods config files (*.eyewoods);;All files (*)"
+            self, "Open File", "", "Eyewoods config files (*.eyewoods);;All files (*)"
         )
         if path:
             self.load_config(path)
@@ -790,6 +871,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         self.settings.setValue("mainwindow/size", event.size())
         super().resizeEvent(event)
+
 
 class Eyewoods(QApplication):
     file_opened = pyqtSignal(str)
@@ -810,7 +892,7 @@ class Eyewoods(QApplication):
 
 def main():
     QCoreApplication.setOrganizationName("Yon")
-    QCoreApplication.setApplicationName("Eyewoods")  
+    QCoreApplication.setApplicationName("Eyewoods")
     app = Eyewoods(sys.argv)
     app.setStyleSheet(QSS)
     window = MainWindow(app.config)
