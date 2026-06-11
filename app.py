@@ -15,6 +15,7 @@ from datetime import timedelta
 import argparse
 import ass
 from typing import Any, Callable, TypedDict
+import re
 import polars as pl
 
 from PyQt6.QtWidgets import (
@@ -456,7 +457,6 @@ class SearchPage(QWidget):
 
         self._result_widgets = []
         self._exhausted = False
-        self._current_query = ""
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
@@ -503,11 +503,11 @@ class SearchPage(QWidget):
 
     def _run_search(self):
         query = self._search_box.text().strip()
-        self._current_query = query
-        if self._current_query == "":
+        if query == "":
             self._model.set_dataframe(pl.DataFrame())
             return
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
+        matches_df = matches_df.with_columns(pl.col("text").str.replace_all(r"(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
 
         match_pivot = matches_df.pivot(
             "track_name",
@@ -532,8 +532,6 @@ class SearchPage(QWidget):
         ).drop("id").collect()
 
         self._model.set_dataframe(result_df)
-
-
         
 
 
