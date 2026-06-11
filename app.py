@@ -515,7 +515,6 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(200)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -532,7 +531,7 @@ class SearchPage(QWidget):
             'Type to search…'
         )
         self._search_box.setFixedHeight(42)
-        self._search_box.textChanged.connect(self._debounce.start)
+        self._search_box.textChanged.connect(self._on_query_change)
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
@@ -556,11 +555,23 @@ class SearchPage(QWidget):
 
         self._search_box.setFocus()
 
-    def _run_search(self):
+    def _on_query_change(self):
         query = self._search_box.text().strip()
-        if query == "":
+        if len(query) == 0:
             self._model.set_dataframe(None)
             return
+        elif len(query) <= 1:
+            delay = 800
+        elif len(query) <= 2:
+            delay = 250
+        elif len(query) >= 3:
+            delay = 10
+        self._debounce.start(delay)
+
+
+    def _run_search(self):
+        query = self._search_box.text().strip()
+
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
         matches_df = (matches_df
             .with_columns(pl.col("text").str.replace_all(r"(?i)(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
