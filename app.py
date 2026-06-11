@@ -512,7 +512,7 @@ class SearchPage(QWidget):
         match_pivot = matches_df.pivot(
             "track_name",
             on_columns=self._config.get_track_names(),
-            index=["id"],
+            index=["id", "Timestamp"],
             values="text",
             aggregate_function="first"
         )
@@ -605,8 +605,19 @@ class MainWindow(QMainWindow):
             .rename({"text_right": "overlap_text", "track_name_right": "overlap_track"})
             .select(["id", "overlap_text", "overlap_track"])
         )
-        event_df = event_df.join(overlaps_df, on="id", how="left")
-        event_df = event_df.collect()
+        event_df = (event_df
+            .join(overlaps_df, on="id", how="left")
+            .with_columns(
+                pl.col("start").dt.total_seconds().alias("Timestamp")
+            )
+            .with_columns(
+                pl.col("Timestamp").map_elements(
+                    lambda s: f"{s // 3_600}:{(s % 3_600) // 60:02d}:{(s % 60):02d}",
+                    return_dtype=pl.String
+                )
+            )
+            .collect()
+        )
 
         search_page = SearchPage(self.config, event_df)
         self._stack.addWidget(search_page)
