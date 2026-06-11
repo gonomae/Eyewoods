@@ -47,7 +47,7 @@ if platform.system() == "Darwin":
     app = BUNDLE(
         coll,
         name='Eyewoods.app',
-        icon=None,
+        icon='icons/Eyewoods.icns',
         bundle_identifier=None,
         info_plist={
             'CFBundleDocumentTypes': [
@@ -69,6 +69,7 @@ elif platform.system() == "Windows":
         a.datas,
         [],
         name='Eyewoods',
+        icon='icons\\Eyewoods.ico',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
