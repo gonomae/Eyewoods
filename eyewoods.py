@@ -1049,11 +1049,18 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
-        file_menu = menu.addMenu("&Edit")
+        edit_menu = menu.addMenu("&Edit")
 
         self.copy_action = QAction("&Copy", self)
         self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        file_menu.addAction(self.copy_action)
+        edit_menu.addAction(self.copy_action)
+
+        edit_menu.addSeparator()
+
+        confirm_action = QAction("&Confirm", self)
+        confirm_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Return))
+        confirm_action.triggered.connect(self._on_confirm)
+        edit_menu.addAction(confirm_action)
 
         help_menu = menu.addMenu("&Help")
 
