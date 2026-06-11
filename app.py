@@ -376,7 +376,7 @@ class SearchPage(QWidget):
     def __init__(self, project_config, event_df, parent=None):
         super().__init__(parent)
         self._config = project_config
-        self._event_df = event_df.lazy()
+        self._event_df = event_df
 
         self._result_widgets = []
         self._exhausted = False
@@ -426,18 +426,26 @@ class SearchPage(QWidget):
         self._current_query = query
         if self._current_query == "":
             return
-        matches_df = (self._event_df
-            .filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
+        matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
+        matches_df = (matches_df
+            .group_by("id")
+            .agg(pl.col("overlap_id"))
+            .sort("id")
             .with_row_index("match_id")
-        )
-        match_count = matches_df.collect().height
+            .drop("overlap_id")
+            .join(matches_df, on="id")
+        ).collect()
+
+        match_count = 0
+        if not matches_df.is_empty():
+            match_count = matches_df.select("match_id").max().item() + 1
         if match_count > 0:
             overlaps_df = (matches_df
                 .select(["match_id", "overlap_id"])
                 .rename({"overlap_id": "id"})
                 .join(self._event_df, on="id")
             )
-            results_df = pl.concat([matches_df, overlaps_df]).collect()
+            results_df = pl.concat([matches_df, overlaps_df]).unique(subset="id")
 
             for i, name in enumerate(self._config.tracks.keys()):
                 self._results_layout.addWidget(QLabel(name), 0, i)
