@@ -9,13 +9,13 @@ import sys
 import os
 import re
 import glob
-import sqlite3
 from pathlib import Path
 from datetime import timedelta
 import argparse
 import ass
 from typing import Any, Callable, TypedDict
 import re
+import tomllib
 import polars as pl
 
 from PyQt6.QtWidgets import (
@@ -168,11 +168,19 @@ class SubtitleEvent:
 class ProjectConfig:
     def __init__(
         self,
-        path: float,
-        tracks: list[tuple[[str, str]]], # [("Name", path)]
+        path: str = "",
+        tracks: list[tuple[[str, str]]] = [], # [("Name", path)]
     ) -> None:
         self.path = path
         self.tracks = tracks
+
+    @classmethod
+    def from_dict(cls, data):
+        print(data)
+        root_path = data.get("root_path", "")
+        tracks = data.get("tracks", [])
+        tracks = [(track.get("name", ""), track.get("glob", "")) for track in tracks]
+        return cls(path=root_path, tracks=tracks)
 
     def get_track_names(self) -> list:
         names = []
@@ -345,6 +353,8 @@ class FileSelectionPage(QWidget):
 
         root.addLayout(bar)
 
+        for (name, glob) in self.project_config.tracks:
+            self._add_row(glob=glob, track_name=name)
 
     def _add_row(self, checked=False, glob=None, track_name=None):
         row = PathRowWidget(self.project_config, glob=glob, track_name=track_name, parent=self)
@@ -541,7 +551,7 @@ class SearchPage(QWidget):
 # ─── Main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
         self.setWindowTitle("FileSearch")
         self.resize(900, 680)
@@ -550,7 +560,7 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        self.config = ProjectConfig("", [])
+        self.config = config
         self._selection_page = FileSelectionPage(self.config)
         self._selection_page.confirm_requested.connect(self._on_confirm)
         self._stack.addWidget(self._selection_page)
@@ -629,11 +639,31 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         super().closeEvent(event)
 
+class Eyewoods(QApplication):
+    def __init__(self, argv):
+        super().__init__(argv)
+        if len(argv) > 1:
+            self.config = self.config_from_file(argv[1])
+        else:
+            self.config = ProjectConfig()
+
+    def event(self, e):
+        if e.type() == QEvent.Type.FileOpen:
+            self.files.append(e.file())
+            self.open_file(e.file())
+            return True
+        return super().event(e)
+
+    def config_from_file(self, file):
+        with open(file, "rb") as f:
+            config_dict = tomllib.load(f)
+            return ProjectConfig.from_dict(config_dict)
+
 
 def main():
-    app = QApplication(sys.argv)
+    app = Eyewoods(sys.argv)
     app.setStyleSheet(QSS)
-    win = MainWindow()
+    win = MainWindow(app.config)
     win.show()
     sys.exit(app.exec())
 
