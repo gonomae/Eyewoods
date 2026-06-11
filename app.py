@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QProgressDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence, QBrush
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ class PathRowWidget(QWidget):
         top.setContentsMargins(0, 0, 0, 0)
         self.file_line = QLineEdit(glob)
         self.file_line.setFixedHeight(32)
-        self.file_line.textChanged.connect(lambda: self._debounce.start())
+        self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
 
         self.track_name = QLineEdit(track_name)
@@ -309,7 +309,7 @@ class FileSelectionPage(QWidget):
 
         self.project_path = QLineEdit(self.project_config.path)
         self.project_path.setFixedHeight(32)
-        self.project_path.textChanged.connect(lambda: self._debounce.start())
+        self.project_path.textChanged.connect(self._debounce.start)
         root.addWidget(self.project_path)
         root.addSpacing(10)
 
@@ -417,7 +417,6 @@ class ResultItemDelegate(QStyledItemDelegate):
             else:
                 return
 
-
         painter.save()
 
         doc = QTextDocument()
@@ -448,7 +447,7 @@ class PolarsTableModel(QAbstractTableModel):
     def __init__(self, df: pl.DataFrame, parent=None):
         super().__init__(parent)
         self._df = df
-        self.merged_rows = []
+        self.headers = []
  
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.height
@@ -461,12 +460,20 @@ class PolarsTableModel(QAbstractTableModel):
             return None
  
         if role == Qt.ItemDataRole.DisplayRole:
-            if index.row() in self.merged_rows and index.column() != 0:
-                return None
+            if index.row() in self.headers["row_id"]:
+                if index.column() == 0:
+                    return self.headers.filter(pl.col("row_id") == index.row())["Episode"].item()
+                else:
+                    return None
             value = self._df[index.row(), index.column()]
             return str(value) if value is not None else ""
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            if index.row() in self.headers["row_id"]:
+                return QBrush(QColor(PANEL_BG))
+
         if role == MERGE_ROW_ROLE:
-            return index.row() in self.merged_rows
+            return index.row() in self.headers["row_id"]
   
         return None
  
@@ -515,7 +522,7 @@ class SearchPage(QWidget):
             'Type to search…'
         )
         self._search_box.setFixedHeight(42)
-        self._search_box.textChanged.connect(lambda: self._debounce.start())
+        self._search_box.textChanged.connect(self._debounce.start)
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
@@ -570,17 +577,22 @@ class SearchPage(QWidget):
             how="full",
         ).sort("id")
 
-        transitions = merged_df.filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1))).with_columns(pl.col("id") - 0.5)
-        result_df = (pl
-            .concat([merged_df.cast({"id": pl.Float64}).drop("Episode"), transitions], how="diagonal")
+        transitions = (merged_df
+            .filter(pl.col("Episode").ne_missing(pl.col("Episode").shift(1)))
+            .with_columns(header=pl.lit(True))
             .sort("id")
-            .drop("id")
-            .select(["Episode", cs.exclude("Episode")])
+        )
+        result_df = (transitions
+            .merge_sorted(merged_df.with_columns(header=pl.lit(False)), key="id", maintain_order=True)
+            .with_row_index("row_id")
             .collect()
         )
 
-        self._model.merged_rows = result_df["Episode"].is_not_null().arg_true()
-        self._model.set_dataframe(result_df)
+        headers = result_df.filter(pl.col("header")).select(["row_id", "Episode"])
+        trimmed_df = result_df.drop(["row_id", "id", "Episode", "header"])
+
+        self._model.headers = headers
+        self._model.set_dataframe(trimmed_df)
         
 
 
