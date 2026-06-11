@@ -19,11 +19,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStyledItemDelegate,
     QVBoxLayout, QHBoxLayout, QGridLayout, QTableView,
     QLabel, QPushButton, QLineEdit, QTextEdit, QHeaderView,
-    QFileDialog, QScrollArea, QFrame, QStyle,
+    QFileDialog, QScrollArea, QFrame, QStyle, QMenu,
     QStackedWidget, QProgressDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex, QCoreApplication, QSettings
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence, QBrush
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QTextDocumentFragment, QStandardItem, QAction, QKeySequence, QBrush
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
@@ -405,6 +405,24 @@ class FileSelectionPage(QWidget):
 
 MERGE_ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
+class ResultTableView(QTableView):
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        copy_action = QAction("&Copy", self)
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.triggered.connect(self.copy_selection)
+        copy_action.setShortcutVisibleInContextMenu(True)
+        menu.addAction(copy_action)
+        menu.exec(event.globalPos())
+
+    def copy_selection(self):
+        index = self.selectionModel().currentIndex()
+        if not index:
+            return
+
+        docFrag = QTextDocumentFragment.fromHtml(index.data())
+        QApplication.clipboard().setText(docFrag.toPlainText())
+
 class ResultItemDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         self.initStyleOption(option, index)
@@ -540,18 +558,19 @@ class SearchPage(QWidget):
             empty_model_data[name] = []
         self._model = PolarsTableModel(None, pl.DataFrame(empty_model_data))
 
-        self._table = QTableView()
-        self._table.setItemDelegate(ResultItemDelegate())
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setMinimumSectionSize(0)
-        self._table.setWordWrap(True)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._model.layoutChanged.connect(self._table.resizeRowsToContents)
-        self._table.setModel(self._model)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table = ResultTableView()
+        self.table.setItemDelegate(ResultItemDelegate())
+        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setMinimumSectionSize(0)
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._model.layoutChanged.connect(self.table.resizeRowsToContents)
+        self.table.setModel(self._model)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
-        root.addWidget(self._table, 1)
+        root.addWidget(self.table, 1)
 
         self._search_box.setFocus()
 
@@ -630,6 +649,13 @@ class MainWindow(QMainWindow):
         self.resize(self.settings.value("mainwindow/size", QSize(900, 680)))
         self.setMinimumSize(640, 480)
 
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self.config = config
+        self._selection_page = FileSelectionPage(self.config)
+        self._selection_page.confirm_requested.connect(self._on_confirm)
+
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
@@ -639,6 +665,12 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
+        file_menu = menu.addMenu("&Edit")
+
+        self.copy_action = QAction("&Copy", self)
+        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        file_menu.addAction(self.copy_action)
+
         help_menu = menu.addMenu("&Help")
 
         about_action = QAction("About Eyewoods", self)
@@ -646,12 +678,6 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-        self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
-
-        self.config = config
-        self._selection_page = FileSelectionPage(self.config)
-        self._selection_page.confirm_requested.connect(self._on_confirm)
         self._stack.addWidget(self._selection_page)
 
     def _on_confirm(self):
@@ -734,6 +760,8 @@ class MainWindow(QMainWindow):
         )
 
         search_page = SearchPage(self.config, event_df)
+        self.copy_action.triggered.connect(search_page.table.copy_selection)
+
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
 
