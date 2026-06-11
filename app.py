@@ -1,0 +1,561 @@
+#!/usr/bin/env python3
+"""
+File Search App — PyQt6
+Select files, edit paths with wildcards/number placeholders,
+then search their contents with SQLite FTS5.
+"""
+
+import sys
+import os
+import re
+import glob
+import sqlite3
+from pathlib import Path
+from datetime import timedelta
+import argparse
+import ass
+from typing import Any, Callable, TypedDict
+import polars as pl
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QLineEdit,
+    QFileDialog, QScrollArea, QFrame,
+    QStackedWidget, QProgressDialog,
+)
+from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
+
+
+# ─── Palette ──────────────────────────────────────────────────────────────────
+
+DARK_BG      = "#0f1117"
+PANEL_BG     = "#171b26"
+CARD_BG      = "#1e2231"
+BORDER       = "#2a2f42"
+ACCENT       = "#4f8ef7"
+ACCENT_DIM   = "#2d5ab5"
+TEXT_MAIN    = "#e8eaf0"
+TEXT_DIM     = "#7a7f94"
+TEXT_MATCH   = "#f7c948"
+DANGER       = "#e05c5c"
+SUCCESS      = "#4ecb71"
+
+QSS = f"""
+QWidget {{
+    background-color: {DARK_BG};
+    color: {TEXT_MAIN};
+    font-family: "Fira Code";
+    font-size: 13px;
+}}
+
+QPushButton {{
+    background-color: {CARD_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 7px 16px;
+}}
+QPushButton:hover {{
+    background-color: {ACCENT_DIM};
+    border-color: {ACCENT};
+}}
+QPushButton:pressed {{
+    background-color: {ACCENT};
+}}
+QPushButton#primary {{
+    background-color: {ACCENT};
+    color: #fff;
+    border: none;
+    font-weight: bold;
+}}
+QPushButton#primary:hover {{
+    background-color: #6aa0ff;
+}}
+QPushButton#primary:disabled {{
+    background-color: #2a3050;
+    color: {TEXT_DIM};
+}}
+QPushButton#danger {{
+    color: {DANGER};
+    border-color: {DANGER};
+    background-color: transparent;
+}}
+QPushButton#danger:hover {{
+    background-color: {DANGER};
+    color: #fff;
+}}
+
+QLineEdit {{
+    background-color: {CARD_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 3px 10px;
+    color: {TEXT_MAIN};
+    selection-background-color: {ACCENT};
+}}
+QLineEdit:focus {{
+    border-color: {ACCENT};
+}}
+
+QScrollArea {{
+    border: none;
+    background-color: transparent;
+}}
+QScrollBar:vertical {{
+    background: {PANEL_BG};
+    width: 8px;
+    border-radius: 4px;
+    margin: 0;
+}}
+QScrollBar::handle:vertical {{
+    background: {BORDER};
+    border-radius: 4px;
+    min-height: 20px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {TEXT_DIM};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+
+QLabel#heading {{
+    font-size: 18px;
+    font-weight: bold;
+    color: {TEXT_MAIN};
+    letter-spacing: 0.5px;
+}}
+QLabel#subheading {{
+    font-size: 11px;
+    color: {TEXT_DIM};
+    letter-spacing: 1px;
+}}
+QLabel#hint {{
+    color: {TEXT_DIM};
+    font-size: 12px;
+}}
+
+"""
+class SubtitleEvent:
+    def __init__(
+        self,
+        start: timedelta,
+        end: timedelta,
+        text: str,
+        episode: str,
+        track_name: str,
+        *,
+        actor: str | None = None,
+    ) -> None:
+        self.start = start
+        self.end = end
+        self.text = text
+        self.episode = episode
+        self.track_name = track_name
+        self.actor = actor
+
+class ProjectConfig:
+    def __init__(
+        self,
+        path: float,
+        tracks: dict[str, str], # [{"Name": path}]
+    ) -> None:
+        self.path = path
+        self.tracks = tracks
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def resolve_pattern(root_dir: str, pattern: str) -> list:
+    """Return sorted list of files matched by pattern."""
+    try:
+        matches = sorted(glob.glob("**/" + pattern, root_dir=os.path.expanduser(root_dir), recursive=True))
+    except Exception:
+        return []
+    return [p for p in matches if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))]
+
+
+# ─── Page 1: File Selection ───────────────────────────────────────────────────
+
+class PathRowWidget(QWidget):
+    remove_requested = pyqtSignal(object)
+
+    def __init__(self, project_config, glob=None, track_name=None, parent=None):
+        super().__init__(parent)
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(350)
+        self._debounce.timeout.connect(self._update_preview)
+
+        self.project_config = project_config
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        top.setContentsMargins(0, 0, 0, 0)
+        self.file_line = QLineEdit(glob)
+        self.file_line.setFixedHeight(32)
+        self.file_line.textChanged.connect(lambda: self._debounce.start())
+        top.addWidget(self.file_line)
+
+        self.track_name = QLineEdit(track_name)
+        self.track_name.setFixedHeight(32)
+        self.track_name.setFixedWidth(130)
+        self.track_name.setPlaceholderText("Track Name")
+        top.addWidget(self.track_name)
+
+        self.remove_btn = QPushButton("x")
+        self.remove_btn.setObjectName("danger")
+        self.remove_btn.setFixedHeight(32)
+        # self.remove_btn.setFixedSize(32, 32)
+        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        top.addWidget(self.remove_btn)
+        layout.addLayout(top)
+
+        self.preview = QLabel()
+        self.preview.setWordWrap(True)
+        layout.addWidget(self.preview)
+
+        self._update_preview()
+
+    def _update_preview(self):
+        pattern = self.file_line.text().strip()
+        if not pattern:
+            self.preview.setText("")
+            return
+        files = resolve_pattern(self.project_config.path, pattern)
+        if not files:
+            self.preview.setStyleSheet(f"color: {DANGER};")
+            self.preview.setText("  ✗ no files matched")
+        else:
+            self.preview.setStyleSheet(f"color: {SUCCESS};")
+            shown = files[:4]
+            text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
+            if len(files) > 4:
+                text += f"  … +{len(files) - 4} more"
+            self.preview.setText(f"{text}   ({len(files)} file{'s' if len(files)!=1 else ''})")
+
+    def get_file_glob(self):
+        return self.file_line.text().strip()
+
+    def get_track_name(self):
+        return self.track_name.text().strip()
+
+
+class FileSelectionPage(QWidget):
+    confirm_requested = pyqtSignal()
+
+    def __init__(self, project_config, parent=None):
+        super().__init__(parent)
+        self._rows = []
+        self.project_config = project_config
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(32, 28, 32, 24)
+        root.setSpacing(0)
+
+        hdr = QLabel("FILE SELECTION")
+        hdr.setObjectName("heading")
+        root.addWidget(hdr)
+        root.addSpacing(10)
+
+        hint_frame = QFrame()
+        hint_frame.setObjectName("card")
+        hint_layout = QVBoxLayout(hint_frame)
+        hint_layout.setContentsMargins(14, 10, 14, 10)
+        hint = QLabel(
+            "<b>Wildcard syntax:</b>  <code>*</code> matches anything  ·  "
+            "<code>{N}</code>  <code>[N]</code>  <code>&lt;N&gt;</code> are number placeholders<br>"
+            "Example:  <code>/logs/app_{}.log</code>  matches  <code>app_1.log</code>, <code>app_42.log</code>, …"
+        )
+        hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setWordWrap(True)
+        hint.setObjectName("hint")
+        hint_layout.addWidget(hint)
+        root.addWidget(hint_frame)
+        root.addSpacing(16)
+
+        path_heading = QLabel("Project Path")
+        path_heading.setObjectName("subheading")
+        root.addWidget(path_heading)
+        root.addSpacing(5)
+
+        self.project_path = QLineEdit(self.project_config.path)
+        self.project_path.setFixedHeight(32)
+        root.addWidget(self.project_path)
+        root.addSpacing(10)
+
+        track_heading = QLabel("Files")
+        track_heading.setObjectName("subheading")
+        root.addWidget(track_heading)
+        root.addSpacing(5)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._rows_container = QWidget()
+        self._rows_layout = QVBoxLayout(self._rows_container)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(14)
+        self._rows_layout.addStretch()
+
+        scroll.setWidget(self._rows_container)
+        root.addWidget(scroll, 1)
+        root.addSpacing(16)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(10)
+
+        add_btn = QPushButton("＋  Add Group")
+        add_btn.clicked.connect(self._add_row)
+        bar.addWidget(add_btn)
+
+        bar.addStretch()
+
+        self.confirm_btn = QPushButton("Confirm  →")
+        self.confirm_btn.setObjectName("primary")
+        self.confirm_btn.setEnabled(False)
+        self.confirm_btn.clicked.connect(self._confirm)
+        bar.addWidget(self.confirm_btn)
+
+        root.addLayout(bar)
+
+
+    def _add_row(self, checked=False, glob=None, track_name=None):
+        row = PathRowWidget(self.project_config, glob=glob, track_name=track_name, parent=self)
+        row.remove_requested.connect(self._remove_row)
+        idx = self._rows_layout.count() - 1
+        self._rows_layout.insertWidget(idx, row)
+        self._rows.append(row)
+        self.confirm_btn.setEnabled(True)
+
+    def _remove_row(self, row):
+        if row in self._rows:
+            self._rows.remove(row)
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+        if len(self._rows) == 0:
+            self.confirm_btn.setEnabled(False)
+
+    def _add_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "All files (*.*)")
+        for p in paths:
+            self._add_row(p)
+
+    def _confirm(self):
+        self.project_config.tracks = {}
+        for row in self._rows:
+            self.project_config.tracks[row.get_track_name()] = row.get_file_glob()
+        self.confirm_requested.emit()
+
+
+# ─── Page 2: Search ───────────────────────────────────────────────────────────
+
+class ResultCell(QWidget):
+    def __init__(self, events, query, event_df, parent=None):
+        super().__init__(parent)
+        self._events = events
+        self._query = query
+        self._event_df = event_df
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+
+        for event in self._events:
+            text_line = QLabel(event["text"])
+            text_line.setWordWrap(True)
+            self._layout.addWidget(text_line)
+        self._layout.addStretch(1)
+
+class SearchPage(QWidget):
+    def __init__(self, project_config, event_df, parent=None):
+        super().__init__(parent)
+        self._config = project_config
+        self._event_df = event_df.lazy()
+
+        self._result_widgets = []
+        self._exhausted = False
+        self._current_query = ""
+
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(300)
+        self._debounce.timeout.connect(self._run_search)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 24, 28, 20)
+        root.setSpacing(0)
+
+        heading = QLabel("SEARCH")
+        heading.setObjectName("heading")
+        root.addWidget(heading)
+        root.addSpacing(16)
+
+        self._search_box = QLineEdit()
+        self._search_box.setPlaceholderText(
+            'Type to search…   supports AND  OR  NOT  "exact phrase"  prefix*'
+        )
+        self._search_box.setFixedHeight(42)
+        self._search_box.textChanged.connect(lambda: self._debounce.start())
+        root.addWidget(self._search_box)
+        root.addSpacing(20)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+
+        self._results_container = QWidget()
+        self._results_layout = QGridLayout(self._results_container)
+        self._results_layout.setSpacing(5)
+
+        self._scroll.setWidget(self._results_container)
+
+        root.addWidget(self._scroll, 1)
+
+        self._search_box.setFocus()
+
+    # ── search entry point ────────────────────────────────────────────────────
+
+    def _run_search(self):
+        self._clear_grid()
+        query = self._search_box.text().strip()
+        self._current_query = query
+        if self._current_query == "":
+            return
+        matches_df = (self._event_df
+            .filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
+            .with_row_index("match_id")
+        )
+        match_count = matches_df.collect().height
+        if match_count > 0:
+            overlaps_df = (matches_df
+                .select(["match_id", "overlap_id"])
+                .rename({"overlap_id": "id"})
+                .join(self._event_df, on="id")
+            )
+            results_df = pl.concat([matches_df, overlaps_df]).collect()
+
+            for i, name in enumerate(self._config.tracks.keys()):
+                self._results_layout.addWidget(QLabel(name), 0, i)
+
+            for match_id in range(match_count):
+                for col, track_name in enumerate(self._config.tracks.keys()):
+                    cell_events = results_df.filter((pl.col("match_id") == match_id) & (pl.col("track_name") == track_name)).to_dicts()
+                    cell = ResultCell(cell_events, self._current_query, self._event_df)
+                    self._results_layout.addWidget(cell, match_id + 1, col)
+            self._results_layout.setRowStretch(match_count + 1, 1)
+
+    def _clear_grid(self):
+        while self._results_layout.count():
+            child = self._results_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+
+# ─── Main window ──────────────────────────────────────────────────────────────
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("FileSearch")
+        self.resize(900, 680)
+        self.setMinimumSize(640, 480)
+
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self.config = ProjectConfig("", [])
+        self._selection_page = FileSelectionPage(self.config)
+        self._selection_page.confirm_requested.connect(self._on_confirm)
+        self._stack.addWidget(self._selection_page)
+
+    def _on_confirm(self):
+        dlg = QProgressDialog("Loading files…", None, 0, len(self.config.tracks), self)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        dlg.setWindowTitle("Loading")
+
+        root_path = Path(os.path.expanduser(self.config.path))
+        all_events = []
+        for i, name in enumerate(self.config.tracks):
+            glob = self.config.tracks[name]
+            dlg.setLabelText(f"Loading ({i + 1}/{len(self.config.tracks)}): {glob}")
+            dlg.setValue(i)
+            QApplication.processEvents()
+            paths = [Path(p) for p in resolve_pattern(self.config.path, glob)]
+            for path in paths:
+                episode_path = str(path.parent)
+                try:
+                    with open(root_path / path, encoding='utf_8_sig') as f:
+                        if path.suffix == ".ass":
+                            parsed_ass = ass.parse(f)
+                            for line_index, event in enumerate(parsed_ass.events):
+                                all_events.append((
+                                    event.start,
+                                    event.end,
+                                    event.text,
+                                    line_index,
+                                    episode_path,
+                                    name,
+                                    event.name
+                                ))
+                        else:
+                            print(f"Unrecognized file type for {path}")
+                            pass
+                except Exception as err:
+                    print(f"Exception {err=} trying to open {path}")
+                    pass
+
+        event_df = pl.DataFrame(
+            all_events,
+            schema={
+                "start": pl.Duration("ms"),
+                "end": pl.Duration("ms"),
+                "text": pl.String,
+                "line_index": pl.Int32,
+                "episode": pl.String,
+                "track_name": pl.String,
+                "actor": pl.String,
+                },
+            orient="row"
+        ).lazy()
+        event_df = event_df.with_row_index("id")
+        overlap_ids = (event_df
+            .join(event_df.select(["id", "track_name", "episode", "start", "end"]), how="cross")
+            .filter(
+                (pl.col("track_name") != pl.col("track_name_right")) &
+                (pl.col("episode") == pl.col("episode_right")) &
+                (pl.col("start") <= pl.col("end_right")) &
+                (pl.col("start_right") <= pl.col("end"))
+            )
+            .rename({"id_right": "overlap_id"})
+            .select(["id", "overlap_id"])
+        )
+        event_df = event_df.join(overlap_ids, on="id")
+        event_df = event_df.collect()
+
+        dlg.close()
+
+        search_page = SearchPage(self.config, event_df)
+        self._stack.addWidget(search_page)
+        self._stack.setCurrentWidget(search_page)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(QSS)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
