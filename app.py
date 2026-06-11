@@ -135,7 +135,20 @@ QLabel#hint {{
     color: {TEXT_DIM};
     font-size: 12px;
 }}
+QLabel#trackLabel {{
+    padding: 5px;
+}}
+QLabel#timestamp {{
+    padding: 5px;
+    background-color: {PANEL_BG}
+}}
+QLabel {{
+    background-color: transparent;
+}}
 
+ResultCell {{
+    padding: 5px;
+}}
 """
 class SubtitleEvent:
     def __init__(
@@ -355,7 +368,7 @@ class FileSelectionPage(QWidget):
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
-class ResultCell(QWidget):
+class ResultCell(QFrame):
     def __init__(self, events, query, event_df, parent=None):
         super().__init__(parent)
         self._events = events
@@ -369,6 +382,7 @@ class ResultCell(QWidget):
         for event in self._events:
             text_line = QLabel(event["text"])
             text_line.setWordWrap(True)
+            text_line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             self._layout.addWidget(text_line)
         self._layout.addStretch(1)
 
@@ -410,7 +424,7 @@ class SearchPage(QWidget):
 
         self._results_container = QWidget()
         self._results_layout = QGridLayout(self._results_container)
-        self._results_layout.setSpacing(5)
+        self._results_layout.setSpacing(0)
 
         self._scroll.setWidget(self._results_container)
 
@@ -448,14 +462,24 @@ class SearchPage(QWidget):
             results_df = pl.concat([matches_df, overlaps_df]).unique(subset="id")
 
             for i, name in enumerate(self._config.tracks.keys()):
-                self._results_layout.addWidget(QLabel(name), 0, i)
+                label = QLabel(name)
+                label.setObjectName("trackLabel")
+                self._results_layout.addWidget(label, 0, i)
 
+            row = 1
             for match_id in range(match_count):
+                row_df = matches_df.filter((pl.col("match_id") == match_id))
+                timestamp = row_df.select("start").item(0, 0)
+                time_label = QLabel(str(timestamp).split(".", 1)[0])
+                time_label.setObjectName("timestamp")
+                self._results_layout.addWidget(time_label, row, 0, 1, -1)
+                row += 1
                 for col, track_name in enumerate(self._config.tracks.keys()):
-                    cell_events = results_df.filter((pl.col("match_id") == match_id) & (pl.col("track_name") == track_name)).to_dicts()
-                    cell = ResultCell(cell_events, self._current_query, self._event_df)
-                    self._results_layout.addWidget(cell, match_id + 1, col)
-            self._results_layout.setRowStretch(match_count + 1, 1)
+                    cell_df = results_df.filter((pl.col("match_id") == match_id) & (pl.col("track_name") == track_name))
+                    cell = ResultCell(cell_df.to_dicts(), self._current_query, self._event_df)
+                    self._results_layout.addWidget(cell, row, col)
+                row += 1
+            self._results_layout.setRowStretch(row, 1)
 
     def _clear_grid(self):
         while self._results_layout.count():
