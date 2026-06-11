@@ -47,4 +47,14 @@ app = BUNDLE(
     name='Eyewoods.app',
     icon=None,
     bundle_identifier=None,
+    info_plist={
+        'CFBundleDocumentTypes': [
+            {
+                'CFBundleTypeName': 'Eyewoods Config File',
+                'CFBundleTypeRole': 'Editor',
+                'LSHandlerRank': 'Owner',
+                'CFBundleTypeExtensions': ['eyewoods'],
+            }
+        ],
+    },
 )

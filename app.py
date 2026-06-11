@@ -176,7 +176,6 @@ class ProjectConfig:
 
     @classmethod
     def from_dict(cls, data):
-        print(data)
         root_path = data.get("root_path", "")
         tracks = data.get("tracks", [])
         tracks = [(track.get("name", ""), track.get("glob", "")) for track in tracks]
@@ -355,6 +354,18 @@ class FileSelectionPage(QWidget):
 
         for (name, glob) in self.project_config.tracks:
             self._add_row(glob=glob, track_name=name)
+
+    def update_config(self, config):
+        self.project_config = config
+        self.project_path.setText(self.project_config.path)
+        for row in self._rows:
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+        self._rows = []
+        for (name, glob) in self.project_config.tracks:
+            self._add_row(glob=glob, track_name=name)
+        self.confirm_btn.setEnabled(len(self._rows) > 0)
+
 
     def _add_row(self, checked=False, glob=None, track_name=None):
         row = PathRowWidget(self.project_config, glob=glob, track_name=track_name, parent=self)
@@ -565,6 +576,14 @@ class MainWindow(QMainWindow):
         self._selection_page.confirm_requested.connect(self._on_confirm)
         self._stack.addWidget(self._selection_page)
 
+    def load_config(self, file):
+        while self._stack.count() > 1:
+            self._stack.removeWidget(self._stack.currentWidget())
+        with open(file, "rb") as f:
+            config_dict = tomllib.load(f)
+            self.config = ProjectConfig.from_dict(config_dict)
+        self._selection_page.update_config(self.config)
+
     def _on_confirm(self):
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
@@ -640,6 +659,8 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 class Eyewoods(QApplication):
+    file_opened = pyqtSignal(str)
+
     def __init__(self, argv):
         super().__init__(argv)
         if len(argv) > 1:
@@ -649,8 +670,7 @@ class Eyewoods(QApplication):
 
     def event(self, e):
         if e.type() == QEvent.Type.FileOpen:
-            self.files.append(e.file())
-            self.open_file(e.file())
+            self.file_opened.emit(e.file())
             return True
         return super().event(e)
 
@@ -663,8 +683,9 @@ class Eyewoods(QApplication):
 def main():
     app = Eyewoods(sys.argv)
     app.setStyleSheet(QSS)
-    win = MainWindow(app.config)
-    win.show()
+    window = MainWindow(app.config)
+    app.file_opened.connect(window.load_config)
+    window.show()
     sys.exit(app.exec())
 
 
