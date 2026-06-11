@@ -67,6 +67,7 @@ TEXT_MAIN = "#e8eaf0"
 TEXT_DIM = "#7a7f94"
 TEXT_MATCH = "#ef5f5f"
 COMMENT_TEXT = "rgba(255,255,255,0.3)"
+ACTOR_TEXT = "rgba(255,255,255,0.5)"
 DANGER = "#e05c5c"
 SUCCESS = "#4ecb71"
 
@@ -655,11 +656,25 @@ class SearchPage(QWidget):
             self._model.set_dataframe(None)
             return
 
+        # Find matches
         matches_df = self._event_df.lazy().filter(
             pl.col("text")
             .str.to_lowercase()
             .str.contains(str.lower(query), literal=True)
         )
+
+        # Escape HTML since we'll be rendering it
+        for prefix in ["", "overlap_"]:
+            matches_df = matches_df.with_columns(
+                pl.col(prefix + "text")
+                .str.replace_all("&", "&amp;", literal=True)
+                .str.replace_all("<", "&lt;", literal=True)
+                .str.replace_all(">", "&gt;", literal=True)
+                .str.replace_all('"', "&quot;", literal=True)
+                .str.replace_all("'", "&#39;", literal=True)
+            )
+
+        # Highlight search term
         matches_df = matches_df.with_columns(
             pl.col("text").str.replace_all(
                 r"(?i)(" + re.escape(query) + ")",
@@ -668,6 +683,7 @@ class SearchPage(QWidget):
         )
 
         for prefix in ["", "overlap_"]:
+            # Style comment lines
             matches_df = matches_df.with_columns(
                 pl.when(pl.col(prefix + "is_comment"))
                 .then(
@@ -678,6 +694,7 @@ class SearchPage(QWidget):
                 .otherwise(prefix + "text")
                 .alias(prefix + "text")
             )
+            # Style ASS linebreaks/spaces
             matches_df = matches_df.with_columns(
                 pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
                 .then(
@@ -688,6 +705,7 @@ class SearchPage(QWidget):
                 )
                 .otherwise(prefix + "text")
             )
+            # Style ass comment/tag blocks only if search term doesn't contain curly braces
             if "{" not in query and "}" not in query:
                 matches_df = matches_df.with_columns(
                     pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
@@ -699,7 +717,20 @@ class SearchPage(QWidget):
                     )
                     .otherwise(prefix + "text")
                 )
+            # Add actor if present
+            matches_df = matches_df.with_columns(
+                pl.when(pl.col(prefix + "actor").cat.len_chars() > 0)
+                .then(
+                    pl.lit(f"<span style='color:{ACTOR_TEXT}'>(")
+                    + pl.col(prefix + "actor")
+                    + pl.lit(")</span> ")
+                    + pl.col(prefix + "text")
+                )
+                .otherwise(prefix + "text")
+                .alias(prefix + "text")
+            )
 
+        # Pivot matched text into track columns
         match_pivot = matches_df.pivot(
             "track",
             on_columns=self._config.get_track_names(),
@@ -708,6 +739,7 @@ class SearchPage(QWidget):
             aggregate_function="first",
         )
 
+        # Pivot overlap text into track columns
         overlap_pivot = matches_df.pivot(
             "overlap_track",
             on_columns=self._config.get_track_names(),
@@ -718,6 +750,7 @@ class SearchPage(QWidget):
             ),
         )
 
+        # Merge pivots
         merged_df = (
             match_pivot.update(
                 overlap_pivot,
