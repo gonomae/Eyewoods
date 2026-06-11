@@ -474,19 +474,10 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._selection_page)
 
     def _on_confirm(self):
-        dlg = QProgressDialog("Loading files…", None, 0, len(self.config.tracks), self)
-        dlg.setWindowModality(Qt.WindowModality.WindowModal)
-        dlg.setMinimumDuration(0)
-        dlg.setValue(0)
-        dlg.setWindowTitle("Loading")
-
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
         for i, name in enumerate(self.config.tracks):
             glob = self.config.tracks[name]
-            dlg.setLabelText(f"Loading ({i + 1}/{len(self.config.tracks)}): {glob}")
-            dlg.setValue(i)
-            QApplication.processEvents()
             paths = [Path(p) for p in resolve_pattern(self.config.path, glob)]
             for path in paths:
                 episode_path = str(path.parent)
@@ -538,8 +529,6 @@ class MainWindow(QMainWindow):
         )
         event_df = event_df.join(overlap_ids, on="id")
         event_df = event_df.collect()
-
-        dlg.close()
 
         search_page = SearchPage(self.config, event_df)
         self._stack.addWidget(search_page)
