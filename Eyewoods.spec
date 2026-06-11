@@ -3,7 +3,7 @@
 
 a = Analysis(
     ['app.py'],
-    pathex=['.venv/lib/python3.14/site-packages'],
+    pathex=[],
     binaries=[],
     datas=[],
     hiddenimports=[],

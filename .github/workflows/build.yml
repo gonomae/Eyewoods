@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+jobs:
+
+  build:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # - {
+          #  name: Windows,
+          #  os: windows-2025,
+          # }
+          # - {
+          #   name: Ubuntu,
+          #   os: ubuntu-latest,
+          # }
+          - {
+            name: macOS,
+            os: macos-15,
+          }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Install the project
+        run: uv sync --locked --dev
+
+      - name: Generate apps
+        run: uv run pyinstaller Eyewoods.spec
+
+      - name: Zip artifacts - macOS app
+        working-directory: ./dist
+        if: startsWith(matrix.config.os, 'macos-')
+        run: zip --symlinks -r Eyewoods Eyewoods.app
+
+      - name: Upload artifacts - macOS app
+        uses: actions/upload-artifact@v7
+        if: startsWith(matrix.config.os, 'macos-')
+        with:
+          name: ${{ matrix.config.name }} app
+          path: dist/Eyewoods*.zip
+          if-no-files-found: error
+          archive: false
+
