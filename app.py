@@ -582,7 +582,7 @@ class PolarsTreeModel(QStandardItemModel):
                 .select(self._leaf_cols)
                 .iter_rows()
             ):
-                child_row = [QStandardItem()] + [QStandardItem(str(v)) for v in df_row]
+                child_row = [QStandardItem()] + [QStandardItem(v) for v in df_row]
                 parent_item.appendRow(child_row)
         self.endResetModel()
         self.layoutChanged.emit()
@@ -644,6 +644,7 @@ class SearchPage(QWidget):
         self.tree.setWordWrap(True)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._apply_column_sizing()
+        self.tree.setSortingEnabled(True)
 
         root.addWidget(self.tree, 1)
 
@@ -658,14 +659,12 @@ class SearchPage(QWidget):
             if episode_doc.idealWidth() > episode_width:
                 episode_width = episode_doc.idealWidth()
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(
-            0, int(episode_width) + 16
-        )  # + space for padding and expand arrow
+        self.tree.setColumnWidth(0, int(episode_width) + 16)
 
         time_doc = QTextDocument()
         time_doc.setHtml("Timestamp")
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(1, int(time_doc.idealWidth()))
+        self.tree.setColumnWidth(1, int(time_doc.idealWidth()) + 16)
 
     def _run_search(self):
         query = self._search_box.text().strip()
