@@ -106,12 +106,16 @@ QPushButton#primary:disabled {{
     background-color: #2a3050;
     color: {TEXT_DIM};
 }}
-QPushButton#danger {{
-    color: {DANGER};
-    border-color: {DANGER};
+
+QToolButton#danger {{
     background-color: transparent;
+    color: {DANGER};
+    border: 1px solid {DANGER};
+    border-radius: 5px;
+    padding: 7px 16px;
+
 }}
-QPushButton#danger:hover {{
+QToolButton#danger:hover {{
     background-color: {DANGER};
     color: #fff;
 }}
@@ -282,7 +286,7 @@ class PathRowWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
         top = QHBoxLayout()
         top.setSpacing(6)
@@ -298,10 +302,12 @@ class PathRowWidget(QWidget):
         self.track_name.setPlaceholderText("Track Name")
         top.addWidget(self.track_name)
 
-        self.remove_btn = QPushButton("x")
+        remove_action = QAction("x")
+        remove_action.triggered.connect(lambda: self.remove_requested.emit(self))
+        self.remove_btn = QToolButton()
+        self.remove_btn.setDefaultAction(remove_action)
         self.remove_btn.setObjectName("danger")
-        self.remove_btn.setFixedHeight(32)
-        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        self.remove_btn.setFixedSize(40, 32)
         top.addWidget(self.remove_btn)
         layout.addLayout(top)
 
@@ -363,7 +369,9 @@ class FileSelectionPage(QWidget):
         hint_frame.setObjectName("card")
         hint_layout = QVBoxLayout(hint_frame)
         hint_layout.setContentsMargins(14, 10, 14, 10)
-        hint = QLabel("<b>Wildcard syntax:</b>  <code>*</code> matches anything")
+        hint = QLabel(
+            "<b>Wildcard syntax:</b>  <code>*</code> matches anything in track file names"
+        )
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
         hint.setObjectName("hint")
@@ -371,18 +379,18 @@ class FileSelectionPage(QWidget):
         root.addWidget(hint_frame)
         root.addSpacing(16)
 
-        path_heading = QLabel("Project Path")
+        path_heading = QLabel("Project path")
         path_heading.setObjectName("subheading")
         root.addWidget(path_heading)
-        root.addSpacing(5)
+        root.addSpacing(10)
 
         self.project_path = QLineEdit(self.project_config.path)
         self.project_path.setFixedHeight(32)
         self.project_path.textChanged.connect(self._debounce.start)
         root.addWidget(self.project_path)
-        root.addSpacing(10)
+        root.addSpacing(15)
 
-        track_heading = QLabel("Files")
+        track_heading = QLabel("Track files")
         track_heading.setObjectName("subheading")
         root.addWidget(track_heading)
         root.addSpacing(5)
