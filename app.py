@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QStyleOptionViewItem,
     QTreeView,
+    QToolButton,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -82,7 +83,7 @@ QWidget {{
 QPushButton {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER};
-    border-radius: 6px;
+    border-radius: 5px;
     padding: 7px 16px;
 }}
 QPushButton:hover {{
@@ -118,7 +119,7 @@ QPushButton#danger:hover {{
 QLineEdit {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER};
-    border-radius: 6px;
+    border-radius: 5px;
     padding: 3px 10px;
     color: {TEXT_MAIN};
     selection-background-color: {ACCENT};
@@ -173,6 +174,29 @@ QLabel#hint {{
     font-size: 12px;
 }}
 
+QToolButton {{
+    background-color: {CARD_BG};
+    border: 1px solid {BORDER};
+    border-radius: 5px;
+    padding: 5px 5px;
+    color: {TEXT_MAIN};
+}}
+QToolButton:hover {{
+    background-color: {ACCENT_DIM};
+    border-color: {ACCENT};
+}}
+QToolButton:pressed {{
+    background-color: {ACCENT};
+}}
+QToolButton:checked {{
+    background-color: {ACCENT_DIM};
+    border-color: {ACCENT};
+    color: #fff;
+}}
+QToolButton:checked:hover {{
+    background-color: {ACCENT};
+    border-color: {ACCENT};
+}}
 
 """
 
@@ -265,7 +289,6 @@ class PathRowWidget(QWidget):
         self.remove_btn = QPushButton("x")
         self.remove_btn.setObjectName("danger")
         self.remove_btn.setFixedHeight(32)
-        # self.remove_btn.setFixedSize(32, 32)
         self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
         top.addWidget(self.remove_btn)
         layout.addLayout(top)
@@ -601,11 +624,60 @@ class SearchPage(QWidget):
         root.addWidget(heading)
         root.addSpacing(16)
 
+        settings = QSettings()
+
+        TOOLBAR_HEIGHT = 36
+        self._toolbar = QHBoxLayout()
+
+        self.regex_toggle = QAction(".*")
+        self.regex_toggle.setCheckable(True)
+        self.regex_toggle.setToolTip("Regular expression")
+        self.regex_toggle.setChecked(settings.value("search/regex", False))
+        self.regex_toggle.triggered.connect(
+            lambda checked: settings.setValue("search/regex", checked)
+        )
+        self.regex_toggle.triggered.connect(self._run_search)
+        regex_btn = QToolButton()
+        regex_btn.setDefaultAction(self.regex_toggle)
+        regex_btn.setFixedSize(TOOLBAR_HEIGHT, TOOLBAR_HEIGHT)
+        self._toolbar.addWidget(regex_btn)
+        self._toolbar.addSpacing(10)
+
+        self.case_toggle = QAction("Aa")
+        self.case_toggle.setCheckable(True)
+        self.case_toggle.setToolTip("Case sensitive")
+        self.case_toggle.setChecked(settings.value("search/case", False))
+        self.case_toggle.triggered.connect(
+            lambda checked: settings.setValue("search/case", checked)
+        )
+        self.case_toggle.triggered.connect(self._run_search)
+        case_btn = QToolButton()
+        case_btn.setDefaultAction(self.case_toggle)
+        case_btn.setFixedSize(TOOLBAR_HEIGHT, TOOLBAR_HEIGHT)
+        self._toolbar.addWidget(case_btn)
+        self._toolbar.addSpacing(10)
+
+        self.word_toggle = QAction("“”")
+        self.word_toggle.setCheckable(True)
+        self.word_toggle.setToolTip("Whole word")
+        self.word_toggle.setChecked(settings.value("search/word", False))
+        self.word_toggle.triggered.connect(
+            lambda checked: settings.setValue("search/word", checked)
+        )
+        self.word_toggle.triggered.connect(self._run_search)
+        word_btn = QToolButton()
+        word_btn.setDefaultAction(self.word_toggle)
+        word_btn.setFixedSize(TOOLBAR_HEIGHT, TOOLBAR_HEIGHT)
+        self._toolbar.addWidget(word_btn)
+        self._toolbar.addSpacing(10)
+
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("Type to search…")
-        self._search_box.setFixedHeight(42)
+        self._search_box.setFixedHeight(TOOLBAR_HEIGHT)
         self._search_box.textChanged.connect(self._run_search)
-        root.addWidget(self._search_box)
+        self._toolbar.addWidget(self._search_box)
+
+        root.addLayout(self._toolbar)
         root.addSpacing(20)
 
         empty_model_data = {"episode": [], "timestamp": []}
@@ -631,7 +703,7 @@ class SearchPage(QWidget):
 
         root.addWidget(self.tree, 1)
 
-        self._search_box.setFocus()
+        QTimer.singleShot(0, self._search_box.setFocus)
 
     def _apply_column_sizing(self):
         episode_doc = QTextDocument()
@@ -656,11 +728,26 @@ class SearchPage(QWidget):
             self._model.set_dataframe(None)
             return
 
+        # Modify query for search settings
+        query_with_settings = query
+        if not self.regex_toggle.isChecked():
+            query_with_settings = re.escape(query_with_settings)
+        if self.word_toggle.isChecked():
+            query_with_settings = r"\b" + query_with_settings + r"\b"
+        query_with_settings = "(" + query_with_settings + ")"
+        if not self.case_toggle.isChecked():
+            query_with_settings = r"(?i)" + query_with_settings
+
+        # Don't search if regex isn't valid
+        try:
+            re.compile(query_with_settings)
+        except re.error:
+            self._model.set_dataframe(None)
+            return
+
         # Find matches
         matches_df = self._event_df.lazy().filter(
-            pl.col("text")
-            .str.to_lowercase()
-            .str.contains(str.lower(query), literal=True)
+            pl.col("text").str.contains(query_with_settings)
         )
 
         # Escape HTML since we'll be rendering it
@@ -677,7 +764,7 @@ class SearchPage(QWidget):
         # Highlight search term
         matches_df = matches_df.with_columns(
             pl.col("text").str.replace_all(
-                r"(?i)(" + re.escape(query) + ")",
+                query_with_settings,
                 f"<span style='color:{TEXT_MATCH};font-weight:bold;'>$1</span>",
             )
         )
