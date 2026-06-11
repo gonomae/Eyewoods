@@ -18,14 +18,14 @@ from typing import Any, Callable, TypedDict
 import polars as pl
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit, QTextEdit,
-    QFileDialog, QScrollArea, QFrame,
+    QApplication, QMainWindow, QWidget, QStyledItemDelegate,
+    QVBoxLayout, QHBoxLayout, QGridLayout, QTableView,
+    QLabel, QPushButton, QLineEdit, QTextEdit, QHeaderView,
+    QFileDialog, QScrollArea, QFrame, QStyle,
     QStackedWidget, QProgressDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument
+from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
@@ -120,6 +120,11 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
 }}
 
+QHeaderView::section {{
+    border: none;
+    background-color: transparent;
+}}
+
 QLabel {{
     background-color: transparent;
 }}
@@ -139,20 +144,7 @@ QLabel#hint {{
     font-size: 12px;
 }}
 
-QLabel#trackLabel {{
-    padding: 5px;
-}}
-QLabel#episodeLabel {{
-    padding: 0px;
-}}
-QLabel#timestamp {{
-    padding: 0px;
-    background-color: {PANEL_BG};
-}}
 
-ResultCell {{
-    padding: 0px;
-}}
 """
 class SubtitleEvent:
     def __init__(
@@ -176,10 +168,17 @@ class ProjectConfig:
     def __init__(
         self,
         path: float,
-        tracks: dict[str, str], # [{"Name": path}]
+        tracks: list[tuple[[str, str]]], # [("Name", path)]
     ) -> None:
         self.path = path
         self.tracks = tracks
+
+    def get_track_names() -> list:
+        names = []
+        for name, _ in self.tracks:
+            if not name in names:
+                names.append(name)
+        return names
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -362,39 +361,86 @@ class FileSelectionPage(QWidget):
             self._add_row(p)
 
     def _confirm(self):
-        self.project_config.tracks = {}
+        self.project_config.tracks = []
         for row in self._rows:
-            self.project_config.tracks[row.get_track_name()] = row.get_file_glob()
+            self.project_config.tracks.append((row.get_track_name(), row.get_file_glob()))
         self.confirm_requested.emit()
 
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
-class ResultCell(QFrame):
-    def __init__(self, events, query, is_match, event_df, parent=None):
+class ResultItemDelegate(QStyledItemDelegate):
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+        self.initStyleOption(option, index)
+        painter.save()
+
+        doc = QTextDocument()
+        doc.setHtml(option.text)
+        doc.setTextWidth(option.rect.width())
+
+        # Draw background
+        option.text = ""
+        option.widget.style().drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, option, painter, option.widget
+        )
+
+        # Clip and translate painter to cell bounds
+        painter.translate(option.rect.topLeft())
+        painter.setClipRect(0, 0, option.rect.width(), option.rect.height() )
+        doc.drawContents(painter)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        self.initStyleOption(option, index)
+        doc = QTextDocument()
+        doc.setHtml(option.text)
+        doc.setTextWidth(option.rect.width())
+        return QSize(int(doc.idealWidth()), int(doc.size().height()))
+
+class PolarsTableModel(QAbstractTableModel):
+    """Qt table model backed by a Polars DataFrame."""
+ 
+    def __init__(self, df: pl.DataFrame, parent=None):
         super().__init__(parent)
-        self._events = events
-        self._query = query
-        self._event_df = event_df
+        self._df = df
+ 
+    # ── Required overrides ──────────────────────────────────────────────────
+ 
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else self._df.height
+ 
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else self._df.width
+ 
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+ 
+        if role == Qt.ItemDataRole.DisplayRole:
+            value = self._df[index.row(), index.column()]
+            return str(value) if value is not None else ""
+  
+        return None
+ 
+    def headerData(self, section: int, orientation: Qt.Orientation,
+                   role: int = Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            return self._df.columns[section]
+        return str(section)   # row numbers
+ 
+    # ── Convenience ─────────────────────────────────────────────────────────
+ 
+    def set_dataframe(self, df: pl.DataFrame) -> None:
+        """Replace the displayed DataFrame and refresh the view."""
+        self.layoutAboutToBeChanged.emit()
+        self.beginResetModel()
+        self._df = df
+        self.endResetModel()
+        self.layoutChanged.emit()
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
-
-        for event in self._events:
-            text = event["text"]
-            if is_match:
-                text = re.sub(
-                    f'({re.escape(query)})',
-                    f'<span style="color:{TEXT_MATCH};font-weight:bold;">\\1</span>',
-                    text,
-                    flags=re.IGNORECASE
-                )
-            text_line = QLabel(text)
-            text_line.setWordWrap(True)
-            text_line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self._layout.addWidget(text_line)
-        self._layout.addStretch(1)
 
 class SearchPage(QWidget):
     def __init__(self, project_config, event_df, parent=None):
@@ -408,7 +454,7 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(300)
+        self._debounce.setInterval(0)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -429,84 +475,37 @@ class SearchPage(QWidget):
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
+        self._model = PolarsTableModel(pl.DataFrame())
 
-        self._results_container = QWidget()
-        self._results_layout = QGridLayout(self._results_container)
-        self._results_layout.setSpacing(0)
+        self._table = QTableView()
+        self._table.setItemDelegate(ResultItemDelegate())
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setWordWrap(True)
+        # self._table.verticalHeader().setVisible(False)
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._model.layoutChanged.connect(self._table.resizeRowsToContents)
+        self._table.setModel(self._model)
 
-        self._scroll.setWidget(self._results_container)
 
-        root.addWidget(self._scroll, 1)
+        root.addWidget(self._table, 1)
 
         self._search_box.setFocus()
 
     # ── search entry point ────────────────────────────────────────────────────
 
     def _run_search(self):
-        self._clear_grid()
         query = self._search_box.text().strip()
         self._current_query = query
         if self._current_query == "":
+            self._model.set_dataframe(pl.DataFrame())
             return
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
-        matches_df = (matches_df
-            .group_by("id")
-            .agg(pl.col("overlap_id"))
-            .sort("id")
-            .with_row_index("match_index")
-            .drop("overlap_id")
-            .join(matches_df, on="id")
-        ).collect()
 
-        match_count = 0
-        if not matches_df.is_empty():
-            match_count = matches_df.select("match_index").max().item() + 1
-        if match_count > 0:
-            overlaps_df = (matches_df
-                .select(["match_index", "overlap_id"])
-                .rename({"overlap_id": "id"})
-                .join(self._event_df, on="id")
-            )
-            results_df = pl.concat([matches_df, overlaps_df]).unique(subset="id").sort("id")
+        self._model.set_dataframe(matches_df.collect())
 
-            for i, name in enumerate(self._config.tracks.keys()):
-                label = QLabel(name)
-                label.setObjectName("trackLabel")
-                self._results_layout.addWidget(label, 0, i)
 
-            row = 1
-            current_episode = ""
-            for match_index in range(match_count):
-                row_matches_df = matches_df.filter((pl.col("match_index") == match_index))
-
-                episode = row_matches_df.select("episode").item(0, 0)
-                if episode != current_episode:
-                    current_episode = episode
-                    episode_label = QLabel("Episode " + current_episode)
-                    episode_label.setObjectName("episodeLabel")
-                    self._results_layout.addWidget(episode_label, row, 0, 1, -1)
-                    row += 1
-
-                timestamp = row_matches_df.select("start").item(0, 0)
-                time_label = QLabel(str(timestamp).split(".", 1)[0])
-                time_label.setObjectName("timestamp")
-                self._results_layout.addWidget(time_label, row, 0, 1, -1)
-                row += 1
-                for col, track_name in enumerate(self._config.tracks.keys()):
-                    cell_df = results_df.filter((pl.col("match_index") == match_index) & (pl.col("track_name") == track_name))
-                    cell_id = cell_df.select("id").item(0, 0)
-                    cell = ResultCell(cell_df.to_dicts(), self._current_query, cell_id in matches_df["id"], self._event_df)
-                    self._results_layout.addWidget(cell, row, col)
-                row += 1
-            self._results_layout.setRowStretch(row, 1)
-
-    def _clear_grid(self):
-        while self._results_layout.count():
-            child = self._results_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        
 
 
 # ─── Main window ──────────────────────────────────────────────────────────────
@@ -529,8 +528,7 @@ class MainWindow(QMainWindow):
     def _on_confirm(self):
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
-        for i, name in enumerate(self.config.tracks):
-            glob = self.config.tracks[name]
+        for i, (name, glob) in enumerate(self.config.tracks):
             paths = [Path(p) for p in resolve_pattern(self.config.path, glob)]
             for path in paths:
                 episode_path = str(path.parent)
@@ -569,18 +567,18 @@ class MainWindow(QMainWindow):
             orient="row"
         ).lazy()
         event_df = event_df.with_row_index("id")
-        overlap_ids = (event_df
-            .join(event_df.select(["id", "track_name", "episode", "start", "end"]), how="cross")
+        overlaps_df = (event_df
+            .join(event_df, how="cross")
             .filter(
                 (pl.col("track_name") != pl.col("track_name_right")) &
                 (pl.col("episode") == pl.col("episode_right")) &
                 (pl.col("start") <= pl.col("end_right")) &
                 (pl.col("start_right") <= pl.col("end"))
             )
-            .rename({"id_right": "overlap_id"})
-            .select(["id", "overlap_id"])
+            .rename({"text_right": "overlap_text", "track_name_right": "overlap_track"})
+            .select(["id", "overlap_text", "overlap_track"])
         )
-        event_df = event_df.join(overlap_ids, on="id", how="left")
+        event_df = event_df.join(overlaps_df, on="id", how="left")
         event_df = event_df.collect()
 
         search_page = SearchPage(self.config, event_df)
