@@ -5,11 +5,12 @@ import os
 import re
 import glob
 from pathlib import Path
-from datetime import timedelta
+from enum import Enum
 import ass
 import srt
 import tomllib
 import polars as pl
+
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -65,6 +66,7 @@ ACCENT_DIM = "#2d5ab5"
 TEXT_MAIN = "#e8eaf0"
 TEXT_DIM = "#7a7f94"
 TEXT_MATCH = "#ef5f5f"
+COMMENT_TEXT = "rgba(255,255,255,0.3)"
 DANGER = "#e05c5c"
 SUCCESS = "#4ecb71"
 
@@ -174,23 +176,9 @@ QLabel#hint {{
 """
 
 
-class SubtitleEvent:
-    def __init__(
-        self,
-        start: timedelta,
-        end: timedelta,
-        text: str,
-        episode: str,
-        track_name: str,
-        *,
-        actor: str | None = None,
-    ) -> None:
-        self.start = start
-        self.end = end
-        self.text = text
-        self.episode = episode
-        self.track_name = track_name
-        self.actor = actor
+class SubtitleSource(Enum):
+    ASS = "ass"
+    SRT = "srt"
 
 
 class ProjectConfig:
@@ -525,7 +513,7 @@ class ResultItemDelegate(QStyledItemDelegate):
         self.initStyleOption(option, index)
         doc = QTextDocument()
         doc.setHtml(option.text)
-        # Make sure we don't break the first two columns
+        # Make sure we don't line break the first two columns
         if index.column() >= 2:
             col_width = option.widget.columnWidth(index.column())
         else:
@@ -603,14 +591,6 @@ class SearchPage(QWidget):
         self._config = project_config
         self._event_df = event_df
 
-        self._result_widgets = []
-        self._exhausted = False
-
-        self._debounce = QTimer()
-        self._debounce.setSingleShot(True)
-        self._debounce.setInterval(0)
-        self._debounce.timeout.connect(self._run_search)
-
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 20)
         root.setSpacing(0)
@@ -623,7 +603,7 @@ class SearchPage(QWidget):
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("Type to search…")
         self._search_box.setFixedHeight(42)
-        self._search_box.textChanged.connect(self._debounce.start)
+        self._search_box.textChanged.connect(self._run_search)
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
@@ -641,8 +621,10 @@ class SearchPage(QWidget):
         self.tree.setSelectionBehavior(QTreeView.SelectionBehavior.SelectItems)
         self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.tree.header().setMinimumSectionSize(0)
+        self.tree.header().setSectionsMovable(False)
         self.tree.setWordWrap(True)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self._apply_column_sizing()
         self.tree.setSortingEnabled(True)
 
@@ -674,17 +656,52 @@ class SearchPage(QWidget):
             return
 
         matches_df = self._event_df.lazy().filter(
-            pl.col("text").str.to_lowercase().str.contains(str.lower(query))
+            pl.col("text")
+            .str.to_lowercase()
+            .str.contains(str.lower(query), literal=True)
         )
         matches_df = matches_df.with_columns(
             pl.col("text").str.replace_all(
                 r"(?i)(" + re.escape(query) + ")",
-                f'<span style="color:{TEXT_MATCH};font-weight:bold;">$1</span>',
+                f"<span style='color:{TEXT_MATCH};font-weight:bold;'>$1</span>",
             )
         )
 
+        for prefix in ["", "overlap_"]:
+            matches_df = matches_df.with_columns(
+                pl.when(pl.col(prefix + "is_comment"))
+                .then(
+                    pl.lit(f"<span style='color:{COMMENT_TEXT}'>")
+                    + pl.col(prefix + "text")
+                    + pl.lit("</span")
+                )
+                .otherwise(prefix + "text")
+                .alias(prefix + "text")
+            )
+            matches_df = matches_df.with_columns(
+                pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
+                .then(
+                    pl.col(prefix + "text").str.replace_all(
+                        r"(\\[Nnh])",
+                        f"<span style='color:{COMMENT_TEXT}'>$1</span>",
+                    )
+                )
+                .otherwise(prefix + "text")
+            )
+            if "{" not in query and "}" not in query:
+                matches_df = matches_df.with_columns(
+                    pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
+                    .then(
+                        pl.col(prefix + "text").str.replace_all(
+                            r"(\{[^}]*\})",
+                            f"<span style='color:{COMMENT_TEXT}'>$1</span>",
+                        )
+                    )
+                    .otherwise(prefix + "text")
+                )
+
         match_pivot = matches_df.pivot(
-            "track_name",
+            "track",
             on_columns=self._config.get_track_names(),
             index=["id", "episode", "timestamp"],
             values="text",
@@ -781,6 +798,8 @@ class MainWindow(QMainWindow):
                                         episode_path,
                                         name,
                                         event.name,
+                                        event.TYPE == "Comment",
+                                        SubtitleSource.ASS.value,
                                     )
                                 )
                         elif path.suffix == ".srt":
@@ -795,6 +814,8 @@ class MainWindow(QMainWindow):
                                         episode_path,
                                         name,
                                         None,
+                                        False,
+                                        SubtitleSource.SRT.value,
                                     )
                                 )
                         else:
@@ -811,9 +832,11 @@ class MainWindow(QMainWindow):
                 "end": pl.Duration("ms"),
                 "text": pl.String,
                 "line_index": pl.Int32,
-                "episode": pl.String,
-                "track_name": pl.String,
-                "actor": pl.String,
+                "episode": pl.Categorical,
+                "track": pl.Enum(self.config.get_track_names()),
+                "actor": pl.Categorical,
+                "is_comment": pl.Boolean,
+                "sub_source": pl.Enum(SubtitleSource),
             },
             orient="row",
         ).lazy()
@@ -821,14 +844,22 @@ class MainWindow(QMainWindow):
         overlaps_df = (
             event_df.join(event_df, how="cross")
             .filter(
-                (pl.col("track_name") != pl.col("track_name_right"))
+                (pl.col("track") != pl.col("track_right"))
                 & (pl.col("episode") == pl.col("episode_right"))
                 & (pl.col("start") <= pl.col("end_right"))
                 & (pl.col("start_right") <= pl.col("end"))
             )
-            .rename({"text_right": "overlap_text", "track_name_right": "overlap_track"})
-            .select(["id", "overlap_text", "overlap_track"])
+            .select(pl.all().name.replace(r"(.+)_right", "overlap_$1"))
+            .drop(
+                [
+                    "overlap_start",
+                    "overlap_end",
+                    "overlap_line_index",
+                    "overlap_episode",
+                ]
+            )
         )
+
         event_df = (
             event_df.join(overlaps_df, on="id", how="left")
             .with_columns(pl.col("start").dt.total_seconds().alias("timestamp"))
