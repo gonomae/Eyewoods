@@ -40,6 +40,7 @@ from PySide6.QtCore import (
     QTimer,
     QSize,
     QEvent,
+    QThread,
     Signal,
     QCoreApplication,
     QSettings,
@@ -55,7 +56,6 @@ from PySide6.QtGui import (
     QStandardItemModel,
     QStandardItem,
 )
-
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
 
@@ -506,6 +506,7 @@ class FileSelectionPage(QWidget):
 
     def _confirm(self):
         self.confirm_btn.setText("Loading…")
+        self.confirm_btn.setEnabled(False)
         self.project_config.path = self.project_path.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
@@ -909,54 +910,21 @@ class SearchPage(QWidget):
 # ─── Main window ──────────────────────────────────────────────────────────────
 
 
-class MainWindow(QMainWindow):
-    def __init__(self, config):
+class DataWorker(QThread):
+    done = Signal(object)
+
+    def __init__(self, project_config):
         super().__init__()
-
-        self.settings = QSettings()
-        self.setWindowTitle("Eyewoods")
-        self.resize(self.settings.value("mainwindow/size", QSize(900, 680)))
-        self.setMinimumSize(640, 480)
-
-        self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
-
-        self.config = config
-        self._selection_page = FileSelectionPage(self.config)
-        self._selection_page.confirm_requested.connect(self._on_confirm)
-
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&File")
-
-        open_action = QAction("&Open…", self)
-        open_action.setShortcut(QKeySequence.StandardKey.Open)
-        open_action.triggered.connect(self.open_file)
-        file_menu.addAction(open_action)
-
-        file_menu = menu.addMenu("&Edit")
-
-        self.copy_action = QAction("&Copy", self)
-        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        file_menu.addAction(self.copy_action)
-
-        help_menu = menu.addMenu("&Help")
-
-        about_action = QAction("About Eyewoods", self)
-        about_action.setMenuRole(QAction.MenuRole.AboutRole)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
-
-        self._stack.addWidget(self._selection_page)
+        self.project_config = project_config
 
     def _load_data(self):
-        root_path = Path(os.path.expanduser(self.config.path))
+        root_path = Path(os.path.expanduser(self.project_config.path))
         all_events = []
-        for i, (name, track_glob) in enumerate(self.config.tracks):
+        for i, (name, track_glob) in enumerate(self.project_config.tracks):
             paths = [
                 Path(p)
                 for p in resolve_pattern(
-                    self.config.path, track_glob, self.config.max_ep
+                    self.project_config.path, track_glob, self.project_config.max_ep
                 )
             ]
             for path in paths:
@@ -1010,7 +978,7 @@ class MainWindow(QMainWindow):
                 "text": pl.String,
                 "line_index": pl.Int32,
                 "episode": pl.Categorical,
-                "track": pl.Enum(self.config.get_track_names()),
+                "track": pl.Enum(self.project_config.get_track_names()),
                 "actor": pl.Categorical,
                 "is_comment": pl.Boolean,
                 "sub_source": pl.Enum(SubtitleSource),
@@ -1051,27 +1019,77 @@ class MainWindow(QMainWindow):
 
         return event_df
 
+    def run(self):
+        result = self._load_data()
+        self.done.emit(result)
 
-    def _on_confirm(self):
-        event_df = self._load_data()
-        search_page = SearchPage(self.config, event_df)
+
+class MainWindow(QMainWindow):
+    def __init__(self, project_config):
+        super().__init__()
+
+        self.settings = QSettings()
+        self.setWindowTitle("Eyewoods")
+        self.resize(self.settings.value("mainwindow/size", QSize(900, 680)))
+        self.setMinimumSize(640, 480)
+
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self.project_config = project_config
+        self._selection_page = FileSelectionPage(self.project_config)
+        self._selection_page.confirm_requested.connect(self._on_confirm)
+
+        menu = self.menuBar()
+
+        file_menu = menu.addMenu("&File")
+
+        open_action = QAction("&Open…", self)
+        open_action.setShortcut(QKeySequence.StandardKey.Open)
+        open_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_action)
+
+        file_menu = menu.addMenu("&Edit")
+
+        self.copy_action = QAction("&Copy", self)
+        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        file_menu.addAction(self.copy_action)
+
+        help_menu = menu.addMenu("&Help")
+
+        about_action = QAction("About Eyewoods", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+        self._stack.addWidget(self._selection_page)
+
+    def _on_done_loading(self, event_df):
+        search_page = SearchPage(self.project_config, event_df)
         self.copy_action.triggered.connect(search_page.tree.copy_selection)
 
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
 
-    def load_config(self, file):
+    def _on_confirm(self):
+        self.worker = DataWorker(self.project_config)
+        self.worker.done.connect(self._on_done_loading)
+        self.worker.start()
+
+    def load_project_config(self, file):
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
-        self.config = ProjectConfig.from_file(file)
-        self._selection_page.update_config(self.config)
+        self.project_config = ProjectConfig.from_file(file)
+        self._selection_page.update_config(self.project_config)
+        self._selection_page.confirm_btn.setText("Confirm  →")
+        self._selection_page.confirm_btn.setEnabled(True)
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "", "Eyewoods config files (*.eyewoods);;All files (*)"
         )
         if path:
-            self.load_config(path)
+            self.load_project_config(path)
 
     def show_about(self):
         QMessageBox.about(self, "About Eyewoods", "Eyewoods v0.0.1\nLorem ipsum.")
@@ -1090,9 +1108,9 @@ class Eyewoods(QApplication):
     def __init__(self, argv):
         super().__init__(argv)
         if len(argv) > 1:
-            self.config = ProjectConfig.from_file(argv[1])
+            self.project_config = ProjectConfig.from_file(argv[1])
         else:
-            self.config = ProjectConfig()
+            self.project_config = ProjectConfig()
 
     def event(self, e):
         if e.type() == QEvent.Type.FileOpen:
@@ -1102,12 +1120,12 @@ class Eyewoods(QApplication):
 
 
 def main():
-    QCoreApplication.setOrganizationName("Yon")
+    QCoreApplication.setOrganizationName("Gonomae")
     QCoreApplication.setApplicationName("Eyewoods")
     app = Eyewoods(sys.argv)
     app.setStyleSheet(QSS)
-    window = MainWindow(app.config)
-    app.file_opened.connect(window.load_config)
+    window = MainWindow(app.project_config)
+    app.file_opened.connect(window.load_project_config)
     window.show()
     sys.exit(app.exec())
 
