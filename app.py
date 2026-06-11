@@ -23,10 +23,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QTableView,
     QLabel, QPushButton, QLineEdit, QTextEdit, QHeaderView,
     QFileDialog, QScrollArea, QFrame, QStyle,
-    QStackedWidget, QProgressDialog,
+    QStackedWidget, QProgressDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
@@ -568,6 +568,22 @@ class MainWindow(QMainWindow):
         self.resize(900, 680)
         self.setMinimumSize(640, 480)
 
+        menu = self.menuBar()
+
+        file_menu = menu.addMenu("&File")
+
+        open_action = QAction("&Open…", self)
+        open_action.setShortcut(QKeySequence.StandardKey.Open)
+        open_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_action)
+
+        help_menu = menu.addMenu("&Help")
+
+        about_action = QAction("About Eyewoods", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
@@ -575,14 +591,6 @@ class MainWindow(QMainWindow):
         self._selection_page = FileSelectionPage(self.config)
         self._selection_page.confirm_requested.connect(self._on_confirm)
         self._stack.addWidget(self._selection_page)
-
-    def load_config(self, file):
-        while self._stack.count() > 1:
-            self._stack.removeWidget(self._stack.currentWidget())
-        with open(file, "rb") as f:
-            config_dict = tomllib.load(f)
-            self.config = ProjectConfig.from_dict(config_dict)
-        self._selection_page.update_config(self.config)
 
     def _on_confirm(self):
         root_path = Path(os.path.expanduser(self.config.path))
@@ -654,6 +662,27 @@ class MainWindow(QMainWindow):
         search_page = SearchPage(self.config, event_df)
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
+
+    def load_config(self, file):
+        while self._stack.count() > 1:
+            self._stack.removeWidget(self._stack.currentWidget())
+        with open(file, "rb") as f:
+            config_dict = tomllib.load(f)
+            self.config = ProjectConfig.from_dict(config_dict)
+        self._selection_page.update_config(self.config)
+
+    def open_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Open File",
+            "",
+            "Eyewoods config files (*.eyewoods);;All files (*)"
+        )
+        if path:
+            self.load_config(path)
+
+    def show_about(self):
+        QMessageBox.about(self, "About Eyewoods", "Eyewoods v0.0.1\nLorem ipsum.")
 
     def closeEvent(self, event):
         super().closeEvent(event)
