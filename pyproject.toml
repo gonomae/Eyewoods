@@ -10,3 +10,8 @@ dependencies = [
     "pyqt6>=6.10.2",
     "srt>=3.5.3",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.16",
+]
