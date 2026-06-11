@@ -20,12 +20,12 @@ import polars as pl
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit,
+    QLabel, QPushButton, QLineEdit, QTextEdit,
     QFileDialog, QScrollArea, QFrame,
     QStackedWidget, QProgressDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QEvent, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
@@ -120,6 +120,9 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
 }}
 
+QLabel {{
+    background-color: transparent;
+}}
 QLabel#heading {{
     font-size: 18px;
     font-weight: bold;
@@ -135,19 +138,20 @@ QLabel#hint {{
     color: {TEXT_DIM};
     font-size: 12px;
 }}
+
 QLabel#trackLabel {{
     padding: 5px;
 }}
-QLabel#timestamp {{
-    padding: 5px;
-    background-color: {PANEL_BG}
+QLabel#episodeLabel {{
+    padding: 0px;
 }}
-QLabel {{
-    background-color: transparent;
+QLabel#timestamp {{
+    padding: 0px;
+    background-color: {PANEL_BG};
 }}
 
 ResultCell {{
-    padding: 5px;
+    padding: 0px;
 }}
 """
 class SubtitleEvent:
@@ -280,9 +284,7 @@ class FileSelectionPage(QWidget):
         hint_layout = QVBoxLayout(hint_frame)
         hint_layout.setContentsMargins(14, 10, 14, 10)
         hint = QLabel(
-            "<b>Wildcard syntax:</b>  <code>*</code> matches anything  ·  "
-            "<code>{N}</code>  <code>[N]</code>  <code>&lt;N&gt;</code> are number placeholders<br>"
-            "Example:  <code>/logs/app_{}.log</code>  matches  <code>app_1.log</code>, <code>app_42.log</code>, …"
+            "<b>Wildcard syntax:</b>  <code>*</code> matches anything"
         )
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
@@ -323,7 +325,7 @@ class FileSelectionPage(QWidget):
         bar = QHBoxLayout()
         bar.setSpacing(10)
 
-        add_btn = QPushButton("＋  Add Group")
+        add_btn = QPushButton("＋  Add Track")
         add_btn.clicked.connect(self._add_row)
         bar.addWidget(add_btn)
 
@@ -420,7 +422,7 @@ class SearchPage(QWidget):
 
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText(
-            'Type to search…   supports AND  OR  NOT  "exact phrase"  prefix*'
+            'Type to search…'
         )
         self._search_box.setFixedHeight(42)
         self._search_box.textChanged.connect(lambda: self._debounce.start())
@@ -475,8 +477,18 @@ class SearchPage(QWidget):
                 self._results_layout.addWidget(label, 0, i)
 
             row = 1
+            current_episode = ""
             for match_index in range(match_count):
                 row_matches_df = matches_df.filter((pl.col("match_index") == match_index))
+
+                episode = row_matches_df.select("episode").item(0, 0)
+                if episode != current_episode:
+                    current_episode = episode
+                    episode_label = QLabel("Episode " + current_episode)
+                    episode_label.setObjectName("episodeLabel")
+                    self._results_layout.addWidget(episode_label, row, 0, 1, -1)
+                    row += 1
+
                 timestamp = row_matches_df.select("start").item(0, 0)
                 time_label = QLabel(str(timestamp).split(".", 1)[0])
                 time_label.setObjectName("timestamp")
@@ -568,7 +580,7 @@ class MainWindow(QMainWindow):
             .rename({"id_right": "overlap_id"})
             .select(["id", "overlap_id"])
         )
-        event_df = event_df.join(overlap_ids, on="id")
+        event_df = event_df.join(overlap_ids, on="id", how="left")
         event_df = event_df.collect()
 
         search_page = SearchPage(self.config, event_df)
