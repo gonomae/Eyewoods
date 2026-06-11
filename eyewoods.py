@@ -12,7 +12,7 @@ import tomllib
 import polars as pl
 
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
@@ -35,18 +35,18 @@ from PyQt6.QtWidgets import (
     QTreeView,
     QToolButton,
 )
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     Qt,
     QTimer,
     QSize,
     QEvent,
-    pyqtSignal,
+    Signal,
     QCoreApplication,
     QSettings,
     QItemSelectionModel,
     QItemSelection,
 )
-from PyQt6.QtGui import (
+from PySide6.QtGui import (
     QTextDocument,
     QTextDocumentFragment,
     QAction,
@@ -285,7 +285,7 @@ def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
 
 
 class PathRowWidget(QWidget):
-    remove_requested = pyqtSignal(object)
+    remove_requested = Signal(object)
 
     def __init__(self, project_config, track_glob=None, track_name=None, parent=None):
         super().__init__(parent)
@@ -358,7 +358,7 @@ class PathRowWidget(QWidget):
 
 
 class FileSelectionPage(QWidget):
-    confirm_requested = pyqtSignal()
+    confirm_requested = Signal()
 
     def __init__(self, project_config, parent=None):
         super().__init__(parent)
@@ -505,6 +505,7 @@ class FileSelectionPage(QWidget):
             row.update_preview()
 
     def _confirm(self):
+        self.confirm_btn.setText("Loading…")
         self.project_config.path = self.project_path.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
@@ -948,7 +949,7 @@ class MainWindow(QMainWindow):
 
         self._stack.addWidget(self._selection_page)
 
-    def _on_confirm(self):
+    def _load_data(self):
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
         for i, (name, track_glob) in enumerate(self.config.tracks):
@@ -1048,6 +1049,11 @@ class MainWindow(QMainWindow):
             .collect()
         )
 
+        return event_df
+
+
+    def _on_confirm(self):
+        event_df = self._load_data()
         search_page = SearchPage(self.config, event_df)
         self.copy_action.triggered.connect(search_page.tree.copy_selection)
 
@@ -1079,7 +1085,7 @@ class MainWindow(QMainWindow):
 
 
 class Eyewoods(QApplication):
-    file_opened = pyqtSignal(str)
+    file_opened = Signal(str)
 
     def __init__(self, argv):
         super().__init__(argv)
