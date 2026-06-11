@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QFrame, QStyle,
     QStackedWidget, QProgressDialog, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex
+from PyQt6.QtCore import Qt, QTimer, QSize, QRect, QEvent, pyqtSignal, QAbstractTableModel, QModelIndex, QCoreApplication, QSettings
 from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextDocument, QStandardItem, QAction, QKeySequence, QBrush
 
 
@@ -447,10 +447,14 @@ class ResultItemDelegate(QStyledItemDelegate):
         return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
 class PolarsTableModel(QAbstractTableModel): 
-    def __init__(self, df: pl.DataFrame, parent=None):
+    def __init__(self, df: pl.DataFrame | None, empty_df: pl.DataFrame, parent=None):
         super().__init__(parent)
-        self._df = df
+        if df is None:
+            self._df = empty_df
+        else:
+            self._df = df
         self.headers = []
+        self._empty_df = empty_df
  
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.height
@@ -488,11 +492,14 @@ class PolarsTableModel(QAbstractTableModel):
             return self._df.columns[section]
         return str(section)   # row numbers
 
-    def set_dataframe(self, df: pl.DataFrame) -> None:
+    def set_dataframe(self, df: pl.DataFrame | None) -> None:
         """Replace the displayed DataFrame and refresh the view."""
         self.layoutAboutToBeChanged.emit()
         self.beginResetModel()
-        self._df = df
+        if df is None:
+            self._df = self._empty_df
+        else:
+            self._df = df
         self.endResetModel()
         self.layoutChanged.emit()
 
@@ -529,19 +536,21 @@ class SearchPage(QWidget):
         root.addWidget(self._search_box)
         root.addSpacing(20)
 
-        self._model = PolarsTableModel(pl.DataFrame())
+        empty_model_data = {"Timestamp": []}
+        for name in self._config.get_track_names():
+            empty_model_data[name] = []
+        self._model = PolarsTableModel(None, pl.DataFrame(empty_model_data))
 
         self._table = QTableView()
         self._table.setItemDelegate(ResultItemDelegate())
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setStretchLastSection(True)
         self._table.horizontalHeader().setMinimumSectionSize(0)
         self._table.setWordWrap(True)
         self._table.verticalHeader().setVisible(False)
         self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._model.layoutChanged.connect(self._table.resizeRowsToContents)
         self._table.setModel(self._model)
-
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
         root.addWidget(self._table, 1)
 
@@ -550,11 +559,11 @@ class SearchPage(QWidget):
     def _run_search(self):
         query = self._search_box.text().strip()
         if query == "":
-            self._model.set_dataframe(pl.DataFrame())
+            self._model.set_dataframe(None)
             return
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
         matches_df = (matches_df
-            .with_columns(pl.col("text").str.replace_all(r"(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
+            .with_columns(pl.col("text").str.replace_all(r"(?i)(" + re.escape(query) + ")", f"<span style=\"color:{TEXT_MATCH};font-weight:bold;\">$1</span>"))
             .rename({"episode": "Episode"})
         )
 
@@ -604,8 +613,10 @@ class SearchPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self, config):
         super().__init__()
-        self.setWindowTitle("FileSearch")
-        self.resize(900, 680)
+
+        self.settings = QSettings()
+        self.setWindowTitle("Eyewoods")
+        self.resize(self.settings.value("mainwindow/size", QSize(900, 680)))
         self.setMinimumSize(640, 480)
 
         menu = self.menuBar()
@@ -737,6 +748,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         super().closeEvent(event)
 
+    def resizeEvent(self, event):
+        self.settings.setValue("mainwindow/size", event.size())
+        super().resizeEvent(event)
+
 class Eyewoods(QApplication):
     file_opened = pyqtSignal(str)
 
@@ -755,6 +770,8 @@ class Eyewoods(QApplication):
 
 
 def main():
+    QCoreApplication.setOrganizationName("Yon")
+    QCoreApplication.setApplicationName("Eyewoods")  
     app = Eyewoods(sys.argv)
     app.setStyleSheet(QSS)
     window = MainWindow(app.config)
