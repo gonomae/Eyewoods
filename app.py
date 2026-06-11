@@ -173,7 +173,7 @@ class ProjectConfig:
         self.path = path
         self.tracks = tracks
 
-    def get_track_names() -> list:
+    def get_track_names(self) -> list:
         names = []
         for name, _ in self.tracks:
             if not name in names:
@@ -201,7 +201,7 @@ class PathRowWidget(QWidget):
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(350)
-        self._debounce.timeout.connect(self._update_preview)
+        self._debounce.timeout.connect(self.update_preview)
 
         self.project_config = project_config
 
@@ -235,9 +235,9 @@ class PathRowWidget(QWidget):
         self.preview.setWordWrap(True)
         layout.addWidget(self.preview)
 
-        self._update_preview()
+        self.update_preview()
 
-    def _update_preview(self):
+    def update_preview(self):
         pattern = self.file_line.text().strip()
         if not pattern:
             self.preview.setText("")
@@ -269,6 +269,11 @@ class FileSelectionPage(QWidget):
         self._rows = []
         self.project_config = project_config
 
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(350)
+        self._debounce.timeout.connect(self._update_project_path)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(32, 28, 32, 24)
         root.setSpacing(0)
@@ -299,6 +304,7 @@ class FileSelectionPage(QWidget):
 
         self.project_path = QLineEdit(self.project_config.path)
         self.project_path.setFixedHeight(32)
+        self.project_path.textChanged.connect(lambda: self._debounce.start())
         root.addWidget(self.project_path)
         root.addSpacing(10)
 
@@ -360,7 +366,13 @@ class FileSelectionPage(QWidget):
         for p in paths:
             self._add_row(p)
 
+    def _update_project_path(self):
+        self.project_config.path = self.project_path.text().strip()
+        for row in self._rows:
+            row.update_preview()
+
     def _confirm(self):
+        self.project_config.path = self.project_path.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
             self.project_config.tracks.append((row.get_track_name(), row.get_file_glob()))
@@ -398,14 +410,10 @@ class ResultItemDelegate(QStyledItemDelegate):
         doc.setTextWidth(option.rect.width())
         return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
-class PolarsTableModel(QAbstractTableModel):
-    """Qt table model backed by a Polars DataFrame."""
- 
+class PolarsTableModel(QAbstractTableModel): 
     def __init__(self, df: pl.DataFrame, parent=None):
         super().__init__(parent)
         self._df = df
- 
-    # ── Required overrides ──────────────────────────────────────────────────
  
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._df.height
@@ -430,9 +438,7 @@ class PolarsTableModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Horizontal:
             return self._df.columns[section]
         return str(section)   # row numbers
- 
-    # ── Convenience ─────────────────────────────────────────────────────────
- 
+
     def set_dataframe(self, df: pl.DataFrame) -> None:
         """Replace the displayed DataFrame and refresh the view."""
         self.layoutAboutToBeChanged.emit()
@@ -454,7 +460,7 @@ class SearchPage(QWidget):
 
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(0)
+        self._debounce.setInterval(200)
         self._debounce.timeout.connect(self._run_search)
 
         root = QVBoxLayout(self)
@@ -481,8 +487,9 @@ class SearchPage(QWidget):
         self._table.setItemDelegate(ResultItemDelegate())
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setMinimumSectionSize(0)
         self._table.setWordWrap(True)
-        # self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setVisible(False)
         self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._model.layoutChanged.connect(self._table.resizeRowsToContents)
         self._table.setModel(self._model)
@@ -502,7 +509,29 @@ class SearchPage(QWidget):
             return
         matches_df = self._event_df.lazy().filter(pl.col("text").str.to_lowercase().str.contains(str.lower(query)))
 
-        self._model.set_dataframe(matches_df.collect())
+        match_pivot = matches_df.pivot(
+            "track_name",
+            on_columns=self._config.get_track_names(),
+            index=["id"],
+            values="text",
+            aggregate_function="first"
+        )
+
+        overlap_pivot = matches_df.pivot(
+            "overlap_track",
+            on_columns=self._config.get_track_names(),
+            index="id",
+            values="overlap_text",
+            aggregate_function=pl.when(pl.element().count() > 0).then(pl.element().str.join("<br/>"))
+        )
+
+        result_df = match_pivot.update(
+            overlap_pivot,
+            on="id",
+            how="full",
+        ).drop("id").collect()
+
+        self._model.set_dataframe(result_df)
 
 
         
