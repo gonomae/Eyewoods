@@ -198,6 +198,18 @@ QToolButton:checked:hover {{
     border-color: {ACCENT};
 }}
 
+QTreeView {{
+    border: none;
+    outline: 0;
+}}
+QTreeView::item:selected {{
+    background-color: #382596;
+}}
+QTreeView::item:selected:!active {{
+    background-color: {BORDER};
+}}
+
+
 """
 
 
