@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QLineEdit,
@@ -226,9 +227,11 @@ class ProjectConfig:
     def __init__(
         self,
         path: str = "",
+        max_ep: int | None = None,
         tracks: list[tuple[[str, str]]] = [],  # [("Name", path)]
     ) -> None:
         self.path = path
+        self.max_ep = max_ep
         self.tracks = tracks
 
     @classmethod
@@ -237,9 +240,10 @@ class ProjectConfig:
             config_dict = tomllib.load(f)
         os.chdir(os.path.dirname(os.path.abspath(file)))
         root_path = config_dict.get("root_path", "")
+        max_ep = config_dict.get("max_ep", None)
         tracks = config_dict.get("tracks", [])
         tracks = [(track.get("name", ""), track.get("glob", "")) for track in tracks]
-        return cls(path=root_path, tracks=tracks)
+        return cls(path=root_path, max_ep=max_ep, tracks=tracks)
 
     def get_track_names(self) -> list:
         names = []
@@ -252,7 +256,14 @@ class ProjectConfig:
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def resolve_pattern(root_dir: str, pattern: str) -> list:
+def get_int_or(value, default):
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
     """Return sorted list of files matched by pattern."""
     try:
         matches = sorted(
@@ -266,6 +277,7 @@ def resolve_pattern(root_dir: str, pattern: str) -> list:
         p
         for p in matches
         if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))
+        and (not max_ep or get_int_or(str(Path(p).parent), -1) <= max_ep)
     ]
 
 
@@ -322,7 +334,9 @@ class PathRowWidget(QWidget):
         if not pattern:
             self.preview.setText("")
             return
-        files = resolve_pattern(self.project_config.path, pattern)
+        files = resolve_pattern(
+            self.project_config.path, pattern, self.project_config.max_ep
+        )
         if not files:
             self.preview.setStyleSheet(f"color: {DANGER};")
             self.preview.setText("  ✗ no files matched")
@@ -354,7 +368,7 @@ class FileSelectionPage(QWidget):
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(1000)
-        self._debounce.timeout.connect(self._update_project_path)
+        self._debounce.timeout.connect(self._update_project_config)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(32, 28, 32, 24)
@@ -379,15 +393,30 @@ class FileSelectionPage(QWidget):
         root.addWidget(hint_frame)
         root.addSpacing(16)
 
+        top_config = QGridLayout()
+        top_config.setHorizontalSpacing(10)
+        top_config.setVerticalSpacing(10)
+
         path_heading = QLabel("Project path")
         path_heading.setObjectName("subheading")
-        root.addWidget(path_heading)
-        root.addSpacing(10)
+        top_config.addWidget(path_heading, 0, 0)
 
         self.project_path = QLineEdit(self.project_config.path)
         self.project_path.setFixedHeight(32)
         self.project_path.textChanged.connect(self._debounce.start)
-        root.addWidget(self.project_path)
+        top_config.addWidget(self.project_path, 1, 0)
+
+        max_ep_label = QLabel("Maximum episode")
+        max_ep_label.setObjectName("subheading")
+        top_config.addWidget(max_ep_label, 0, 1)
+
+        self.max_ep = QLineEdit(str(self.project_config.max_ep or ""))
+        self.max_ep.setPlaceholderText("Applies to any purely numeric episode path")
+        self.max_ep.setFixedHeight(32)
+        self.max_ep.textChanged.connect(self._debounce.start)
+        top_config.addWidget(self.max_ep, 1, 1)
+
+        root.addLayout(top_config)
         root.addSpacing(15)
 
         track_heading = QLabel("Track files")
@@ -432,6 +461,7 @@ class FileSelectionPage(QWidget):
     def update_config(self, config):
         self.project_config = config
         self.project_path.setText(self.project_config.path)
+        self.max_ep.setText(str(self.project_config.max_ep or ""))
         for row in self._rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
@@ -468,8 +498,9 @@ class FileSelectionPage(QWidget):
         for p in paths:
             self._add_row(p)
 
-    def _update_project_path(self):
+    def _update_project_config(self):
         self.project_config.path = self.project_path.text().strip()
+        self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
         for row in self._rows:
             row.update_preview()
 
@@ -921,7 +952,12 @@ class MainWindow(QMainWindow):
         root_path = Path(os.path.expanduser(self.config.path))
         all_events = []
         for i, (name, track_glob) in enumerate(self.config.tracks):
-            paths = [Path(p) for p in resolve_pattern(self.config.path, track_glob)]
+            paths = [
+                Path(p)
+                for p in resolve_pattern(
+                    self.config.path, track_glob, self.config.max_ep
+                )
+            ]
             for path in paths:
                 episode_path = str(path.parent)
                 try:
