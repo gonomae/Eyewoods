@@ -698,7 +698,6 @@ class SearchPage(QWidget):
 
         self.regex_toggle = QAction(".*")
         self.regex_toggle.setCheckable(True)
-        # self.regex_toggle.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         regex_shorcut = QKeySequence(Qt.Modifier.ALT | Qt.Modifier.CTRL | Qt.Key.Key_R)
         self.regex_toggle.setShortcut(regex_shorcut)
         self.regex_toggle.setToolTip(
@@ -833,9 +832,9 @@ class SearchPage(QWidget):
             self._model.set_dataframe(None)
             return
 
-        # Find matches
         context_range = self.context_box.value()
 
+        # Get the window of surrounding context lines
         event_df = self._event_df.lazy()
         rolling_groups = event_df.with_columns(pl.col("id").alias("match_id")).rolling(
             index_column="match_id",
@@ -851,10 +850,12 @@ class SearchPage(QWidget):
             how="horizontal",
         )
 
+        # Find matches
         matches_df = (
             rolling_df.filter(pl.col("match_text").str.contains(query_with_settings))
             .drop("match_text")
             .explode(pl.exclude("match_id"))
+            .unique(subset=["id", "overlap_id"], keep="first")
         )
 
         # Escape HTML since we'll be rendering it
@@ -924,6 +925,15 @@ class SearchPage(QWidget):
                 .alias(prefix + "text")
             )
 
+        # Merge match_id (and thus result row) if results are within context distance
+        matches_df = matches_df.sort("match_id").with_columns(
+            pl.col("match_id")
+            .first()
+            .over(
+                (pl.col("match_id").diff().abs().fill_null(0) > context_range).cum_sum()
+            )
+        )
+
         # Pivot matched text into track columns
         match_pivot = (
             matches_df.unique(subset=["match_id", "id"])
@@ -953,9 +963,7 @@ class SearchPage(QWidget):
                 on_columns=self._config.get_track_names(),
                 index="match_id",
                 values="overlap_text",
-                aggregate_function=pl.when(pl.element().count() > 0).then(
-                    pl.element().str.join("<br/>")
-                ),
+                aggregate_function=None,
             )
         )
 
