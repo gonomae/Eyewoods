@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTreeView,
     QToolButton,
+    QSpinBox,
 )
 from PySide6.QtCore import (
     Qt,
@@ -203,6 +204,17 @@ QToolButton:checked:hover {{
     border-color: {ACCENT};
 }}
 
+QSpinBox {{
+    background-color: {CARD_BG};
+    border: 1px solid {BORDER};
+    border-radius: 5px;
+    padding: 5px 5px;
+    color: {TEXT_MAIN};
+}}
+QSpinBox:focus {{
+    border-color: {ACCENT};
+}}
+
 QTreeView {{
     border: none;
     outline: 0;
@@ -304,14 +316,15 @@ class PathRowWidget(QWidget):
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
         self.file_line = QLineEdit(track_glob)
+        self.file_line.setPlaceholderText("ShowName * Dialogue.ass")
         self.file_line.setFixedHeight(32)
         self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
 
         self.track_name = QLineEdit(track_name)
+        self.track_name.setPlaceholderText("Track Name")
         self.track_name.setFixedHeight(32)
         self.track_name.setFixedWidth(130)
-        self.track_name.setPlaceholderText("Track Name")
         top.addWidget(self.track_name)
 
         remove_action = QAction("x")
@@ -402,6 +415,7 @@ class FileSelectionPage(QWidget):
         top_config.addWidget(path_heading, 0, 0)
 
         self.project_path = QLineEdit(self.project_config.path)
+        self.project_path.setPlaceholderText("/path/to/your/project/")
         self.project_path.setFixedHeight(32)
         self.project_path.textChanged.connect(self._debounce.start)
         top_config.addWidget(self.project_path, 1, 0)
@@ -684,7 +698,12 @@ class SearchPage(QWidget):
 
         self.regex_toggle = QAction(".*")
         self.regex_toggle.setCheckable(True)
-        self.regex_toggle.setToolTip("Regular expression")
+        # self.regex_toggle.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        regex_shorcut = QKeySequence(Qt.Modifier.ALT | Qt.Modifier.CTRL | Qt.Key.Key_R)
+        self.regex_toggle.setShortcut(regex_shorcut)
+        self.regex_toggle.setToolTip(
+            f"Regular expression ({regex_shorcut.toString(QKeySequence.SequenceFormat.NativeText)})"
+        )
         self.regex_toggle.setChecked(settings.value("search/regex", False))
         self.regex_toggle.triggered.connect(
             lambda checked: settings.setValue("search/regex", checked)
@@ -698,7 +717,11 @@ class SearchPage(QWidget):
 
         self.case_toggle = QAction("Aa")
         self.case_toggle.setCheckable(True)
-        self.case_toggle.setToolTip("Case sensitive")
+        case_shorcut = QKeySequence(Qt.Modifier.ALT | Qt.Modifier.CTRL | Qt.Key.Key_C)
+        self.case_toggle.setShortcut(case_shorcut)
+        self.case_toggle.setToolTip(
+            f"Case sensitive ({case_shorcut.toString(QKeySequence.SequenceFormat.NativeText)})"
+        )
         self.case_toggle.setChecked(settings.value("search/case", False))
         self.case_toggle.triggered.connect(
             lambda checked: settings.setValue("search/case", checked)
@@ -712,7 +735,11 @@ class SearchPage(QWidget):
 
         self.word_toggle = QAction("“”")
         self.word_toggle.setCheckable(True)
-        self.word_toggle.setToolTip("Whole word")
+        word_shorcut = QKeySequence(Qt.Modifier.ALT | Qt.Modifier.CTRL | Qt.Key.Key_W)
+        self.word_toggle.setShortcut(word_shorcut)
+        self.word_toggle.setToolTip(
+            f"Whole word ({word_shorcut.toString(QKeySequence.SequenceFormat.NativeText)})"
+        )
         self.word_toggle.setChecked(settings.value("search/word", False))
         self.word_toggle.triggered.connect(
             lambda checked: settings.setValue("search/word", checked)
@@ -729,6 +756,14 @@ class SearchPage(QWidget):
         self._search_box.setFixedHeight(TOOLBAR_HEIGHT)
         self._search_box.textChanged.connect(self._run_search)
         self._toolbar.addWidget(self._search_box)
+        self._toolbar.addSpacing(10)
+
+        self.context_box = QSpinBox()
+        self.context_box.setFixedSize(40, TOOLBAR_HEIGHT)
+        self.context_box.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.context_box.setToolTip("Show X lines before and after each match.")
+        self.context_box.valueChanged.connect(self._run_search)
+        self._toolbar.addWidget(self.context_box)
 
         root.addLayout(self._toolbar)
         root.addSpacing(20)
@@ -799,8 +834,27 @@ class SearchPage(QWidget):
             return
 
         # Find matches
-        matches_df = self._event_df.lazy().filter(
-            pl.col("text").str.contains(query_with_settings)
+        context_range = self.context_box.value()
+
+        event_df = self._event_df.lazy()
+        rolling_groups = event_df.with_columns(pl.col("id").alias("match_id")).rolling(
+            index_column="match_id",
+            period=f"{context_range * 2 + 1}i",
+            offset=f"{-context_range}i",
+            closed="left",
+        )
+        rolling_df = pl.concat(
+            [
+                rolling_groups.all(),
+                event_df.select(pl.col("text").alias("match_text")),
+            ],
+            how="horizontal",
+        )
+
+        matches_df = (
+            rolling_df.filter(pl.col("match_text").str.contains(query_with_settings))
+            .drop("match_text")
+            .explode(pl.exclude("match_id"))
         )
 
         # Escape HTML since we'll be rendering it
@@ -829,7 +883,7 @@ class SearchPage(QWidget):
                 .then(
                     pl.lit(f"<span style='color:{COMMENT_TEXT}'>")
                     + pl.col(prefix + "text")
-                    + pl.lit("</span")
+                    + pl.lit("</span>")
                 )
                 .otherwise(prefix + "text")
                 .alias(prefix + "text")
@@ -871,34 +925,52 @@ class SearchPage(QWidget):
             )
 
         # Pivot matched text into track columns
-        match_pivot = matches_df.pivot(
-            "track",
-            on_columns=self._config.get_track_names(),
-            index=["id", "episode", "timestamp"],
-            values="text",
-            aggregate_function="first",
+        match_pivot = (
+            matches_df.unique(subset=["match_id", "id"])
+            .sort("id")
+            .group_by("match_id")
+            .agg(pl.col("text").str.join("<br/>"), pl.col("track").first())
+            .pivot(
+                "track",
+                on_columns=self._config.get_track_names(),
+                index=["match_id"],
+                values="text",
+                aggregate_function=None,
+            )
         )
 
         # Pivot overlap text into track columns
-        overlap_pivot = matches_df.pivot(
-            "overlap_track",
-            on_columns=self._config.get_track_names(),
-            index="id",
-            values="overlap_text",
-            aggregate_function=pl.when(pl.element().count() > 0).then(
-                pl.element().str.join("<br/>")
-            ),
+        overlap_pivot = (
+            matches_df.unique(subset="overlap_id")
+            .sort("overlap_id")
+            .group_by("match_id")
+            .agg(
+                pl.col("overlap_text").str.join("<br/>"),
+                pl.col("overlap_track").first(),
+            )
+            .pivot(
+                "overlap_track",
+                on_columns=self._config.get_track_names(),
+                index="match_id",
+                values="overlap_text",
+                aggregate_function=pl.when(pl.element().count() > 0).then(
+                    pl.element().str.join("<br/>")
+                ),
+            )
         )
 
         # Merge pivots
         merged_df = (
-            match_pivot.update(
-                overlap_pivot,
-                on="id",
-                how="full",
+            matches_df.filter(pl.col("id") == pl.col("match_id"))
+            .unique(subset="match_id")
+            .select(["match_id", "episode", "timestamp"])
+            .join(
+                match_pivot,
+                on="match_id",
             )
-            .sort("id")
-            .drop("id")
+            .update(overlap_pivot, on="match_id", how="full")
+            .sort("match_id")
+            .drop("match_id")
         ).collect()
 
         self._model.set_dataframe(merged_df)
@@ -970,7 +1042,7 @@ class DataWorker(QThread):
                     print(f"Exception {err=} trying to open {path}")
                     pass
 
-        event_df = pl.DataFrame(
+        event_df = pl.LazyFrame(
             all_events,
             schema={
                 "start": pl.Duration("ms"),
@@ -984,7 +1056,7 @@ class DataWorker(QThread):
                 "sub_source": pl.Enum(SubtitleSource),
             },
             orient="row",
-        ).lazy()
+        )
         event_df = event_df.with_row_index("id")
         overlaps_df = (
             event_df.join(event_df, how="cross")
@@ -1014,6 +1086,7 @@ class DataWorker(QThread):
                     return_dtype=pl.String,
                 )
             )
+            .sort("id")
             .collect()
         )
 
