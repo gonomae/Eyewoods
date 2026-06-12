@@ -1138,10 +1138,12 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
-        confirm_action = QAction("&Confirm", self)
-        confirm_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Return))
-        confirm_action.triggered.connect(self._on_confirm)
-        edit_menu.addAction(confirm_action)
+        self.confirm_action = QAction("&Confirm", self)
+        self.confirm_action.setShortcut(
+            QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Return)
+        )
+        self.confirm_action.triggered.connect(self._on_confirm)
+        edit_menu.addAction(self.confirm_action)
 
         help_menu = menu.addMenu("&Help")
 
@@ -1160,6 +1162,7 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(search_page)
 
     def _on_confirm(self):
+        self.confirm_action.setEnabled(False)
         self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
