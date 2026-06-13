@@ -2,11 +2,14 @@
 
 import platform
 
+with open("build/version.txt", "r") as f:
+    version = f.read()
+
 a = Analysis(
-    ['eyewoods.py'],
+    ["eyewoods.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[("build/version.txt", ".")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -23,7 +26,7 @@ if platform.system() == "Darwin":
         a.scripts,
         [],
         exclude_binaries=True,
-        name='Eyewoods',
+        name="Eyewoods",
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -42,20 +45,21 @@ if platform.system() == "Darwin":
         strip=False,
         upx=True,
         upx_exclude=[],
-        name='Eyewoods',
+        name="Eyewoods",
     )
     app = BUNDLE(
         coll,
-        name='Eyewoods.app',
-        icon='icons/Eyewoods.icns',
+        name="Eyewoods.app",
+        icon="icons/Eyewoods.icns",
         bundle_identifier=None,
+        version=version,
         info_plist={
-            'CFBundleDocumentTypes': [
+            "CFBundleDocumentTypes": [
                 {
-                    'CFBundleTypeName': 'Eyewoods Config File',
-                    'CFBundleTypeRole': 'Editor',
-                    'LSHandlerRank': 'Owner',
-                    'CFBundleTypeExtensions': ['eyewoods'],
+                    "CFBundleTypeName": "Eyewoods Config File",
+                    "CFBundleTypeRole": "Editor",
+                    "LSHandlerRank": "Owner",
+                    "CFBundleTypeExtensions": ["eyewoods"],
                 }
             ],
         },
@@ -68,8 +72,8 @@ elif platform.system() == "Windows":
         a.binaries,
         a.datas,
         [],
-        name='Eyewoods',
-        icon='icons\\Eyewoods.ico',
+        name="Eyewoods",
+        icon="icons\\Eyewoods.ico",
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,

@@ -26,6 +26,8 @@ jobs:
           # }
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
 
       - name: "Set up Python"
         uses: actions/setup-python@v6
@@ -38,8 +40,14 @@ jobs:
       - name: Install the project
         run: uv sync --locked --dev
 
+      - name: Run checks
+        run: |
+          uv run ruff format --check
+          uv run ruff check
+
       - name: Generate apps
-        run: uv run pyinstaller Eyewoods.spec
+        shell: bash
+        run: ./build.sh
 
       - name: Upload artifacts - Windows exe
         uses: actions/upload-artifact@v7

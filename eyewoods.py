@@ -43,7 +43,6 @@ from PySide6.QtCore import (
     QEvent,
     QThread,
     Signal,
-    QCoreApplication,
     QSettings,
     QItemSelectionModel,
     QItemSelection,
@@ -1107,7 +1106,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.settings = QSettings()
-        self.setWindowTitle("Eyewoods")
+        self.setWindowTitle(QApplication.applicationName())
         self.resize(self.settings.value("mainwindow/size", QSize(900, 680)))
         self.setMinimumSize(640, 480)
 
@@ -1150,7 +1149,7 @@ class MainWindow(QMainWindow):
 
         help_menu = menu.addMenu("&Help")
 
-        about_action = QAction("About Eyewoods", self)
+        about_action = QAction(f"About {QApplication.applicationName()}", self)
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
@@ -1191,7 +1190,9 @@ class MainWindow(QMainWindow):
             self.load_project_config(path)
 
     def show_about(self):
-        QMessageBox.about(self, "About Eyewoods", "Eyewoods v0.0.1\nLorem ipsum.")
+        name = QApplication.applicationName()
+        version = QApplication.applicationVersion()
+        QMessageBox.about(self, f"About {name}", f"{name} {version}")
 
     def closeEvent(self, event):
         super().closeEvent(event)
@@ -1219,9 +1220,16 @@ class Eyewoods(QApplication):
 
 
 def main():
-    QCoreApplication.setOrganizationName("Gonomae")
-    QCoreApplication.setApplicationName("Eyewoods")
     app = Eyewoods(sys.argv)
+    app.setOrganizationName("Gonomae")
+    app.setApplicationName("Eyewoods")
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        version_path = Path(__file__).resolve().with_name("version.txt")
+        with open(version_path, "r") as f:
+            version = f.read()
+        app.setApplicationVersion(version)
+    else:
+        app.setApplicationVersion("0.0.0-dev")
     app.setStyleSheet(QSS)
     window = MainWindow(app.project_config)
     app.file_opened.connect(window.load_project_config)

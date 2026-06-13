@@ -22,7 +22,6 @@ wheels = [
 
 [[package]]
 name = "eyewoods"
-version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ass" },
