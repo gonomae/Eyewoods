@@ -78,7 +78,6 @@ QSS = f"""
 QWidget {{
     background-color: {DARK_BG};
     color: {TEXT_MAIN};
-    font-family: "Fira Code";
     font-size: 13px;
 }}
 
@@ -128,7 +127,6 @@ QLineEdit {{
     border-radius: 5px;
     padding: 3px 10px;
     color: {TEXT_MAIN};
-    selection-background-color: {ACCENT};
 }}
 QLineEdit:focus {{
     border-color: {ACCENT};
@@ -181,6 +179,7 @@ QLabel#hint {{
 }}
 
 QToolButton {{
+    font-family: "Fira Code";
     background-color: {CARD_BG};
     border: 1px solid {BORDER};
     border-radius: 5px;
@@ -216,6 +215,7 @@ QSpinBox:focus {{
 }}
 
 QTreeView {{
+    alternate-background-color: {PANEL_BG};
     border: none;
     outline: 0;
 }}
@@ -387,7 +387,7 @@ class FileSelectionPage(QWidget):
         root.setContentsMargins(32, 28, 32, 24)
         root.setSpacing(0)
 
-        hdr = QLabel("FILE SELECTION")
+        hdr = QLabel("PROJECT CONFIGURATION")
         hdr.setObjectName("heading")
         root.addWidget(hdr)
         root.addSpacing(10)
@@ -464,7 +464,7 @@ class FileSelectionPage(QWidget):
         self.confirm_btn = QPushButton("Confirm  →")
         self.confirm_btn.setObjectName("primary")
         self.confirm_btn.setEnabled(False)
-        self.confirm_btn.clicked.connect(self._confirm)
+        self.confirm_btn.clicked.connect(self.confirm)
         bar.addWidget(self.confirm_btn)
 
         root.addLayout(bar)
@@ -518,10 +518,11 @@ class FileSelectionPage(QWidget):
         for row in self._rows:
             row.update_preview()
 
-    def _confirm(self):
+    def confirm(self):
         self.confirm_btn.setText("Loading…")
         self.confirm_btn.setEnabled(False)
         self.project_config.path = self.project_path.text().strip()
+        self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
         self.project_config.tracks = []
         for row in self._rows:
             self.project_config.tracks.append(
@@ -686,11 +687,6 @@ class SearchPage(QWidget):
         root.setContentsMargins(28, 24, 28, 20)
         root.setSpacing(0)
 
-        heading = QLabel("SEARCH")
-        heading.setObjectName("heading")
-        root.addWidget(heading)
-        root.addSpacing(16)
-
         settings = QSettings()
 
         TOOLBAR_HEIGHT = 36
@@ -787,6 +783,7 @@ class SearchPage(QWidget):
         self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self._apply_column_sizing()
         self.tree.setSortingEnabled(True)
+        self.tree.setAlternatingRowColors(True)
 
         root.addWidget(self.tree, 1)
 
@@ -1130,6 +1127,12 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
+        self.close_action = QAction("&Close", self)
+        self.close_action.setShortcut(QKeySequence.StandardKey.Close)
+        self.close_action.triggered.connect(self.close_search)
+        self.close_action.setEnabled(False)
+        file_menu.addAction(self.close_action)
+
         edit_menu = menu.addMenu("&Edit")
 
         self.copy_action = QAction("&Copy", self)
@@ -1142,7 +1145,7 @@ class MainWindow(QMainWindow):
         self.confirm_action.setShortcut(
             QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Return)
         )
-        self.confirm_action.triggered.connect(self._on_confirm)
+        self.confirm_action.triggered.connect(self._selection_page.confirm)
         edit_menu.addAction(self.confirm_action)
 
         help_menu = menu.addMenu("&Help")
@@ -1160,6 +1163,7 @@ class MainWindow(QMainWindow):
 
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
+        self.close_action.setEnabled(True)
 
     def _on_confirm(self):
         self.confirm_action.setEnabled(False)
@@ -1167,13 +1171,17 @@ class MainWindow(QMainWindow):
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
 
-    def load_project_config(self, file):
+    def close_search(self):
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
-        self.project_config = ProjectConfig.from_file(file)
+        self.close_action.setEnabled(False)
+        self.confirm_action.setEnabled(True)
         self._selection_page.update_config(self.project_config)
         self._selection_page.confirm_btn.setText("Confirm  →")
-        self._selection_page.confirm_btn.setEnabled(True)
+
+    def load_project_config(self, file):
+        self.project_config = ProjectConfig.from_file(file)
+        self.close_search()
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
