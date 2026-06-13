@@ -276,6 +276,8 @@ def get_int_or(value, default):
 
 def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
     """Return sorted list of files matched by pattern."""
+    # Escape [ and ] because we don't want to glob character classes
+    pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
     try:
         matches = sorted(
             glob.glob(
@@ -396,7 +398,7 @@ class FileSelectionPage(QWidget):
         hint_layout = QVBoxLayout(hint_frame)
         hint_layout.setContentsMargins(14, 10, 14, 10)
         hint = QLabel(
-            "<b>Wildcard syntax:</b>  <code>*</code> matches anything in track file names"
+            "<b>Wildcard syntax: </b><code>?</code> matches any character, <code>*</code> matches any number of characterrs in track file names"
         )
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
