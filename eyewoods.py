@@ -1036,7 +1036,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
         self._stack.addWidget(self._selection_page)
-        self.worker = DataWorker(self.project_config)
 
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
@@ -1048,6 +1047,7 @@ class MainWindow(QMainWindow):
 
     def _on_confirm(self):
         self.confirm_action.setEnabled(False)
+        self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
 
@@ -1076,9 +1076,11 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, f"About {name}", f"{name} {version}")
 
     def closeEvent(self, event):
-        if self.worker:
+        try:
             self.worker.quit()
             self.worker.wait()
+        except AttributeError:
+            pass
         super().closeEvent(event)
 
     def resizeEvent(self, event):
