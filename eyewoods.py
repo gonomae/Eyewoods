@@ -6,6 +6,7 @@ import re
 import glob
 from pathlib import Path
 from enum import Enum
+from typing import NamedTuple
 import ass
 import srt
 import tomllib
@@ -234,12 +235,15 @@ class SubtitleSource(Enum):
     SRT = "srt"
 
 
+class SubTrack(NamedTuple):
+    name: str = ""
+    pattern: str = ""
+    comments_on: bool = True
+
+
 class ProjectConfig:
     def __init__(
-        self,
-        path: str = "",
-        max_ep: int | None = None,
-        tracks: list[tuple[[str, str]]] = [],  # [("Name", path)]
+        self, path: str = "", max_ep: int | None = None, tracks: list[SubTrack] = []
     ) -> None:
         self.path = path
         self.max_ep = max_ep
@@ -253,12 +257,19 @@ class ProjectConfig:
         root_path = config_dict.get("root_path", "")
         max_ep = config_dict.get("max_ep", None)
         tracks = config_dict.get("tracks", [])
-        tracks = [(track.get("name", ""), track.get("glob", "")) for track in tracks]
+        tracks = [
+            SubTrack(
+                name=track.get("name", ""),
+                pattern=track.get("glob", ""),
+                comments_on=track.get("comments_on", True),
+            )
+            for track in tracks
+        ]
         return cls(path=root_path, max_ep=max_ep, tracks=tracks)
 
     def get_track_names(self) -> list:
         names = []
-        for name, _ in self.tracks:
+        for name, _, _ in self.tracks:
             if name not in names:
                 names.append(name)
         return names
@@ -300,7 +311,7 @@ def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
 class PathRowWidget(QWidget):
     remove_requested = Signal(object)
 
-    def __init__(self, project_config, track_glob=None, track_name=None, parent=None):
+    def __init__(self, project_config, track, parent=None):
         super().__init__(parent)
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
@@ -313,28 +324,38 @@ class PathRowWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
+        TOP_HEIGHT = 32
+
         top = QHBoxLayout()
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
-        self.file_line = QLineEdit(track_glob)
+        self.file_line = QLineEdit(track.pattern)
         self.file_line.setPlaceholderText("ShowName * Dialogue.ass")
-        self.file_line.setFixedHeight(32)
+        self.file_line.setFixedHeight(TOP_HEIGHT)
         self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
 
-        self.track_name = QLineEdit(track_name)
+        self.track_name = QLineEdit(track.name)
         self.track_name.setPlaceholderText("Track Name")
-        self.track_name.setFixedHeight(32)
+        self.track_name.setFixedHeight(TOP_HEIGHT)
         self.track_name.setFixedWidth(130)
         top.addWidget(self.track_name)
 
+        self.comment_toggle = QAction("{\\t}")
+        self.comment_toggle.setCheckable(True)
+        self.comment_toggle.setChecked(track.comments_on)
+        comment_btn = QToolButton()
+        comment_btn.setDefaultAction(self.comment_toggle)
+        comment_btn.setFixedSize(44, TOP_HEIGHT)
+        top.addWidget(comment_btn)
+
         remove_action = QAction("x")
         remove_action.triggered.connect(lambda: self.remove_requested.emit(self))
-        self.remove_btn = QToolButton()
-        self.remove_btn.setDefaultAction(remove_action)
-        self.remove_btn.setObjectName("danger")
-        self.remove_btn.setFixedSize(40, 32)
-        top.addWidget(self.remove_btn)
+        remove_btn = QToolButton()
+        remove_btn.setDefaultAction(remove_action)
+        remove_btn.setObjectName("danger")
+        remove_btn.setFixedSize(44, TOP_HEIGHT)
+        top.addWidget(remove_btn)
         layout.addLayout(top)
 
         self.preview = QLabel()
@@ -364,11 +385,11 @@ class PathRowWidget(QWidget):
                 f"{text}   ({len(files)} file{'s' if len(files) != 1 else ''})"
             )
 
-    def get_file_glob(self):
-        return self.file_line.text().strip()
-
-    def get_track_name(self):
-        return self.track_name.text().strip()
+    def get_track_info(self):
+        name = self.track_name.text().strip()
+        pattern = self.file_line.text().strip()
+        comments_on = self.comment_toggle.isChecked()
+        return SubTrack(name=name, pattern=pattern, comments_on=comments_on)
 
 
 class FileSelectionPage(QWidget):
@@ -470,8 +491,8 @@ class FileSelectionPage(QWidget):
 
         root.addLayout(bar)
 
-        for name, track_glob in self.project_config.tracks:
-            self._add_row(track_glob=track_glob, track_name=name)
+        for track in self.project_config.tracks:
+            self._add_row(track=track)
 
     def update_config(self, config):
         self.project_config = config
@@ -481,15 +502,14 @@ class FileSelectionPage(QWidget):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows = []
-        for name, track_glob in self.project_config.tracks:
-            self._add_row(track_glob=track_glob, track_name=name)
+        for track in self.project_config.tracks:
+            self._add_row(track=track)
         self.confirm_btn.setEnabled(len(self._rows) > 0)
 
-    def _add_row(self, checked=False, track_glob=None, track_name=None):
+    def _add_row(self, track=SubTrack()):
         row = PathRowWidget(
             self.project_config,
-            track_glob=track_glob,
-            track_name=track_name,
+            track=track,
             parent=self,
         )
         row.remove_requested.connect(self._remove_row)
@@ -506,13 +526,6 @@ class FileSelectionPage(QWidget):
         if len(self._rows) == 0:
             self.confirm_btn.setEnabled(False)
 
-    def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select files", "", "All files (*.*)"
-        )
-        for p in paths:
-            self._add_row(p)
-
     def _update_project_config(self):
         self.project_config.path = self.project_path.text().strip()
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
@@ -526,9 +539,7 @@ class FileSelectionPage(QWidget):
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
         self.project_config.tracks = []
         for row in self._rows:
-            self.project_config.tracks.append(
-                (row.get_track_name(), row.get_file_glob())
-            )
+            self.project_config.tracks.append(row.get_track_info())
         self.confirm_requested.emit()
 
 
@@ -876,6 +887,10 @@ class SearchPage(QWidget):
         )
 
         for prefix in ["", "overlap_"]:
+            # Remove comment lines where specified
+            matches_df = matches_df.remove(
+                pl.col(prefix + "is_comment") & ~pl.col(prefix + "comments_on")
+            )
             # Style comment lines
             matches_df = matches_df.with_columns(
                 pl.when(pl.col(prefix + "is_comment"))
@@ -887,6 +902,7 @@ class SearchPage(QWidget):
                 .otherwise(prefix + "text")
                 .alias(prefix + "text")
             )
+
             # Style ASS linebreaks/spaces
             matches_df = matches_df.with_columns(
                 pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
@@ -898,13 +914,30 @@ class SearchPage(QWidget):
                 )
                 .otherwise(prefix + "text")
             )
-            # Style ass comment/tag blocks only if search term doesn't contain curly braces
+
+            # If search term doesn't contain curly braces
             if "{" not in query and "}" not in query:
+                # Remove ass comments where specified
+                matches_df = matches_df.with_columns(
+                    pl.when(
+                        (pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
+                        & ~pl.col(prefix + "comments_on")
+                    )
+                    .then(
+                        pl.col(prefix + "text").str.replace_all(
+                            r"(\{[^}]*?\})",
+                            "",
+                        )
+                    )
+                    .otherwise(prefix + "text")
+                )
+
+                # Style ass comment/tag blocks only i
                 matches_df = matches_df.with_columns(
                     pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
                     .then(
                         pl.col(prefix + "text").str.replace_all(
-                            r"(\{[^}]*\})",
+                            r"(\{[^}]*?\})",
                             f"<span style='color:{COMMENT_TEXT}'>$1</span>",
                         )
                     )
@@ -995,11 +1028,11 @@ class DataWorker(QThread):
     def _load_data(self):
         root_path = Path(os.path.expanduser(self.project_config.path))
         all_events = []
-        for i, (name, track_glob) in enumerate(self.project_config.tracks):
+        for i, track in enumerate(self.project_config.tracks):
             paths = [
                 Path(p)
                 for p in resolve_pattern(
-                    self.project_config.path, track_glob, self.project_config.max_ep
+                    self.project_config.path, track.pattern, self.project_config.max_ep
                 )
             ]
             for path in paths:
@@ -1016,10 +1049,11 @@ class DataWorker(QThread):
                                         event.text,
                                         line_index,
                                         episode_path,
-                                        name,
+                                        track.name,
                                         event.name,
                                         event.TYPE == "Comment",
                                         SubtitleSource.ASS.value,
+                                        track.comments_on,
                                     )
                                 )
                         elif path.suffix == ".srt":
@@ -1032,10 +1066,11 @@ class DataWorker(QThread):
                                         event.content,
                                         line_index,
                                         episode_path,
-                                        name,
+                                        track.name,
                                         None,
                                         False,
                                         SubtitleSource.SRT.value,
+                                        track.comments_on,
                                     )
                                 )
                         else:
@@ -1057,6 +1092,7 @@ class DataWorker(QThread):
                 "actor": pl.Categorical,
                 "is_comment": pl.Boolean,
                 "sub_source": pl.Enum(SubtitleSource),
+                "comments_on": pl.Boolean,
             },
             orient="row",
         )
