@@ -951,11 +951,8 @@ class SearchPage(QWidget):
         overlap_pivot = (
             matches_df.unique(subset="overlap_id")
             .sort("overlap_id")
-            .group_by("match_id")
-            .agg(
-                pl.col("overlap_text").str.join("<br/>"),
-                pl.col("overlap_track").first(),
-            )
+            .group_by(["match_id", "overlap_track"])
+            .agg(pl.col("overlap_text").str.join("<br/>"))
             .pivot(
                 "overlap_track",
                 on_columns=self._config.get_track_names(),
