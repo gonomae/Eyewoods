@@ -2,4 +2,4 @@
 
 mkdir -p build
 git describe --dirty > build/version.txt
-uv run pyinstaller Eyewoods.spec
+uv run pyinstaller Eyewoods.spec $1

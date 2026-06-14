@@ -9,7 +9,11 @@ a = Analysis(
     ["eyewoods.py"],
     pathex=[],
     binaries=[],
-    datas=[("build/version.txt", ".")],
+    datas=[
+        ("build/version.txt", "."), 
+        ("style.qss", "."), 
+        ("theme.toml", ".")
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

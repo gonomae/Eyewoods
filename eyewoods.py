@@ -59,176 +59,10 @@ from PySide6.QtGui import (
     QStandardItem,
 )
 
-# ─── Palette ──────────────────────────────────────────────────────────────────
 
-DARK_BG = "#0f1117"
-PANEL_BG = "#171b26"
-CARD_BG = "#1e2231"
-BORDER = "#2a2f42"
-ACCENT = "#4f8ef7"
-ACCENT_DIM = "#2d5ab5"
-TEXT_MAIN = "#e8eaf0"
-TEXT_DIM = "#7a7f94"
-TEXT_MATCH = "#ef5f5f"
+QUERY_MATCH_TEXT = "#ef5f5f"
 COMMENT_TEXT = "rgba(255,255,255,0.3)"
 ACTOR_TEXT = "rgba(255,255,255,0.5)"
-DANGER = "#e05c5c"
-SUCCESS = "#4ecb71"
-
-QSS = f"""
-QWidget {{
-    background-color: {DARK_BG};
-    color: {TEXT_MAIN};
-    font-size: 13px;
-}}
-
-QPushButton {{
-    background-color: {CARD_BG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 7px 16px;
-}}
-QPushButton:hover {{
-    background-color: {ACCENT_DIM};
-    border-color: {ACCENT};
-}}
-QPushButton:pressed {{
-    background-color: {ACCENT};
-}}
-QPushButton#primary {{
-    background-color: {ACCENT};
-    color: #fff;
-    border: none;
-    font-weight: bold;
-}}
-QPushButton#primary:hover {{
-    background-color: #6aa0ff;
-}}
-QPushButton#primary:disabled {{
-    background-color: #2a3050;
-    color: {TEXT_DIM};
-}}
-
-QToolButton#danger {{
-    background-color: transparent;
-    color: {DANGER};
-    border: 1px solid {DANGER};
-    border-radius: 5px;
-    padding: 7px 16px;
-
-}}
-QToolButton#danger:hover {{
-    background-color: {DANGER};
-    color: #fff;
-}}
-
-QLineEdit {{
-    background-color: {CARD_BG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 3px 10px;
-    color: {TEXT_MAIN};
-}}
-QLineEdit:focus {{
-    border-color: {ACCENT};
-}}
-
-QScrollArea {{
-    border: none;
-    background-color: transparent;
-}}
-QScrollBar:vertical {{
-    background: {PANEL_BG};
-    width: 8px;
-    border-radius: 4px;
-    margin: 0;
-}}
-QScrollBar::handle:vertical {{
-    background: {BORDER};
-    border-radius: 4px;
-    min-height: 20px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background: {TEXT_DIM};
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0;
-}}
-
-QHeaderView::section {{
-    border: none;
-    background-color: transparent;
-}}
-
-QLabel {{
-    background-color: transparent;
-}}
-QLabel#heading {{
-    font-size: 18px;
-    font-weight: bold;
-    color: {TEXT_MAIN};
-    letter-spacing: 0.5px;
-}}
-QLabel#subheading {{
-    font-size: 11px;
-    color: {TEXT_DIM};
-    letter-spacing: 1px;
-}}
-QLabel#hint {{
-    color: {TEXT_DIM};
-    font-size: 12px;
-}}
-
-QToolButton {{
-    font-family: "Fira Code";
-    background-color: {CARD_BG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 5px 5px;
-    color: {TEXT_MAIN};
-}}
-QToolButton:hover {{
-    background-color: {ACCENT_DIM};
-    border-color: {ACCENT};
-}}
-QToolButton:pressed {{
-    background-color: {ACCENT};
-}}
-QToolButton:checked {{
-    background-color: {ACCENT_DIM};
-    border-color: {ACCENT};
-    color: #fff;
-}}
-QToolButton:checked:hover {{
-    background-color: {ACCENT};
-    border-color: {ACCENT};
-}}
-
-QSpinBox {{
-    background-color: {CARD_BG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 5px 5px;
-    color: {TEXT_MAIN};
-}}
-QSpinBox:focus {{
-    border-color: {ACCENT};
-}}
-
-QTreeView {{
-    alternate-background-color: {PANEL_BG};
-    border: none;
-    outline: 0;
-}}
-QTreeView::item:selected {{
-    background-color: #382596;
-}}
-QTreeView::item:selected:!active {{
-    background-color: {BORDER};
-}}
-
-
-"""
 
 
 class SubtitleSource(Enum):
@@ -377,10 +211,10 @@ class PathRowWidget(QWidget):
             self.project_config.path, pattern, self.project_config.max_ep
         )
         if not files:
-            self.preview.setStyleSheet(f"color: {DANGER};")
+            self.preview.setStyleSheet("color: #e05c5c;")
             self.preview.setText("  ✗ no files matched")
         else:
-            self.preview.setStyleSheet(f"color: {SUCCESS};")
+            self.preview.setStyleSheet("color: #4ecb71;")
             shown = files[:4]
             text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
             if len(files) > 4:
@@ -590,6 +424,7 @@ class TreeSelectionModel(QItemSelectionModel):
             super().select(selection, command)
             return
 
+        # If the item in the leftmost column has children, select the whole row
         if index.model().hasChildren(index.siblingAtColumn(0)):
             command |= QItemSelectionModel.SelectionFlag.Rows
 
@@ -881,7 +716,7 @@ class SearchPage(QWidget):
         matches_df = matches_df.with_columns(
             pl.col("text").str.replace_all(
                 query_with_settings,
-                f"<span style='color:{TEXT_MATCH};font-weight:bold;'>$1</span>",
+                f"<span style='color:{QUERY_MATCH_TEXT};font-weight:bold;'>$1</span>",
             )
         )
 
@@ -1102,7 +937,9 @@ class DataWorker(QThread):
             },
             orient="row",
         )
+        # Give a unique index to every event
         event_df = event_df.with_row_index("id")
+        # Find lines from across tracks that have timing overlap
         overlaps_df = (
             event_df.join(event_df, how="cross")
             .filter(
@@ -1122,6 +959,8 @@ class DataWorker(QThread):
             )
         )
 
+        # Merge overlap lines into the original events to include lines that had no overlap
+        # Format timestamps into strings
         event_df = (
             event_df.join(overlaps_df, on="id", how="left")
             .with_columns(pl.col("start").dt.total_seconds().alias("timestamp"))
@@ -1131,6 +970,7 @@ class DataWorker(QThread):
                     return_dtype=pl.String,
                 )
             )
+            .drop(["start", "end"])
             .sort("id")
             .collect()
         )
@@ -1274,7 +1114,15 @@ def main():
         app.setApplicationVersion(version)
     else:
         app.setApplicationVersion("0.0.0-dev")
-    app.setStyleSheet(QSS)
+
+    theme_path = Path(__file__).resolve().with_name("theme.toml")
+    with open(theme_path, "rb") as f:
+        theme = tomllib.load(f)
+    style_path = Path(__file__).resolve().with_name("style.qss")
+    with open(style_path) as f:
+        sheet = f.read().format_map(theme)
+        app.setStyleSheet(sheet)
+
     window = MainWindow(app.project_config)
     app.file_opened.connect(window.load_project_config)
     window.show()
