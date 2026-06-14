@@ -7,6 +7,7 @@ import glob
 from pathlib import Path
 from enum import Enum
 from typing import NamedTuple
+from datetime import timedelta
 import ass
 import srt
 import tomllib
@@ -239,6 +240,7 @@ class SubTrack(NamedTuple):
     name: str = ""
     pattern: str = ""
     comments_on: bool = True
+    time_shift: float = 0
 
 
 class ProjectConfig:
@@ -262,6 +264,7 @@ class ProjectConfig:
                 name=track.get("name", ""),
                 pattern=track.get("glob", ""),
                 comments_on=track.get("comments_on", True),
+                time_shift=track.get("time_shift", 0),
             )
             for track in tracks
         ]
@@ -269,9 +272,9 @@ class ProjectConfig:
 
     def get_track_names(self) -> list:
         names = []
-        for name, _, _ in self.tracks:
-            if name not in names:
-                names.append(name)
+        for track in self.tracks:
+            if track.name not in names:
+                names.append(track.name)
         return names
 
 
@@ -319,6 +322,7 @@ class PathRowWidget(QWidget):
         self._debounce.timeout.connect(self.update_preview)
 
         self.project_config = project_config
+        self.track = track
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -329,13 +333,13 @@ class PathRowWidget(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
-        self.file_line = QLineEdit(track.pattern)
+        self.file_line = QLineEdit(self.track.pattern)
         self.file_line.setPlaceholderText("ShowName * Dialogue.ass")
         self.file_line.setFixedHeight(TOP_HEIGHT)
         self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
 
-        self.track_name = QLineEdit(track.name)
+        self.track_name = QLineEdit(self.track.name)
         self.track_name.setPlaceholderText("Track Name")
         self.track_name.setFixedHeight(TOP_HEIGHT)
         self.track_name.setFixedWidth(130)
@@ -343,7 +347,7 @@ class PathRowWidget(QWidget):
 
         self.comment_toggle = QAction("{\\t}")
         self.comment_toggle.setCheckable(True)
-        self.comment_toggle.setChecked(track.comments_on)
+        self.comment_toggle.setChecked(self.track.comments_on)
         comment_btn = QToolButton()
         comment_btn.setDefaultAction(self.comment_toggle)
         comment_btn.setFixedSize(44, TOP_HEIGHT)
@@ -386,10 +390,12 @@ class PathRowWidget(QWidget):
             )
 
     def get_track_info(self):
-        name = self.track_name.text().strip()
-        pattern = self.file_line.text().strip()
-        comments_on = self.comment_toggle.isChecked()
-        return SubTrack(name=name, pattern=pattern, comments_on=comments_on)
+        self.track = self.track._replace(
+            name=self.track_name.text().strip(),
+            pattern=self.file_line.text().strip(),
+            comments_on=self.comment_toggle.isChecked(),
+        )
+        return self.track
 
 
 class FileSelectionPage(QWidget):
@@ -1029,6 +1035,7 @@ class DataWorker(QThread):
         root_path = Path(os.path.expanduser(self.project_config.path))
         all_events = []
         for i, track in enumerate(self.project_config.tracks):
+            shift_delta = timedelta(seconds=track.time_shift)
             paths = [
                 Path(p)
                 for p in resolve_pattern(
@@ -1044,8 +1051,8 @@ class DataWorker(QThread):
                             for line_index, event in enumerate(parsed_ass.events):
                                 all_events.append(
                                     (
-                                        event.start,
-                                        event.end,
+                                        event.start + shift_delta,
+                                        event.end + shift_delta,
                                         event.text,
                                         line_index,
                                         episode_path,
@@ -1061,8 +1068,8 @@ class DataWorker(QThread):
                             for line_index, event in enumerate(parsed_srt):
                                 all_events.append(
                                     (
-                                        event.start,
-                                        event.end,
+                                        event.start + shift_delta,
+                                        event.end + shift_delta,
                                         event.content,
                                         line_index,
                                         episode_path,
@@ -1190,6 +1197,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
         self._stack.addWidget(self._selection_page)
+        self.worker = DataWorker(self.project_config)
 
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
@@ -1201,7 +1209,6 @@ class MainWindow(QMainWindow):
 
     def _on_confirm(self):
         self.confirm_action.setEnabled(False)
-        self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
 
@@ -1230,6 +1237,9 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, f"About {name}", f"{name} {version}")
 
     def closeEvent(self, event):
+        if self.worker:
+            self.worker.quit()
+            self.worker.wait()
         super().closeEvent(event)
 
     def resizeEvent(self, event):
