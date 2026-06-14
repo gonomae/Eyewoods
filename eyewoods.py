@@ -840,13 +840,6 @@ class SearchPage(QWidget):
         if not self.case_toggle.isChecked():
             query_with_settings = r"(?i)" + query_with_settings
 
-        # Don't search if regex isn't valid
-        try:
-            re.compile(query_with_settings)
-        except re.error:
-            self._model.set_dataframe(None)
-            return
-
         context_range = self.context_box.value()
 
         # Get the window of surrounding context lines
@@ -1013,11 +1006,17 @@ class SearchPage(QWidget):
             .update(overlap_pivot, on="match_id", how="full")
             .sort("match_id")
             .drop("match_id")
-        ).collect()
+        )
 
-        self._model.set_dataframe(merged_df)
+        try:
+            collected_df = merged_df.collect()
+        except pl.exceptions.ComputeError:
+            # Don't update the model if the query provided an invalid regex
+            return
 
-        if merged_df.height < 100:
+        self._model.set_dataframe(collected_df)
+
+        if collected_df.height < 100:
             self.tree.expandAll()
 
 
