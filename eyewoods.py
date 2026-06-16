@@ -11,6 +11,7 @@ from datetime import timedelta
 import ass
 import srt
 import tomllib
+import subprocess
 import polars as pl
 
 
@@ -79,9 +80,14 @@ class SubTrack(NamedTuple):
 
 class ProjectConfig:
     def __init__(
-        self, path: str = "", max_ep: int | None = None, tracks: list[SubTrack] = []
+        self,
+        path: str = "",
+        video_pattern: str = "",
+        max_ep: int | None = None,
+        tracks: list[SubTrack] = [],
     ) -> None:
         self.path = path
+        self.video_pattern = video_pattern
         self.max_ep = max_ep
         self.tracks = tracks
 
@@ -91,6 +97,7 @@ class ProjectConfig:
             config_dict = tomllib.load(f)
         os.chdir(os.path.dirname(os.path.abspath(file)))
         root_path = config_dict.get("root_path", "")
+        video_pattern = config_dict.get("video_glob", "")
         max_ep = config_dict.get("max_ep", None)
         tracks = config_dict.get("tracks", [])
         tracks = [
@@ -102,7 +109,9 @@ class ProjectConfig:
             )
             for track in tracks
         ]
-        return cls(path=root_path, max_ep=max_ep, tracks=tracks)
+        return cls(
+            path=root_path, video_pattern=video_pattern, max_ep=max_ep, tracks=tracks
+        )
 
     def get_track_names(self) -> list:
         names = []
@@ -140,6 +149,21 @@ def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
         if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))
         and (not max_ep or get_int_or(str(Path(p).parent), -1) <= max_ep)
     ]
+
+
+def resolve_episode_pattern(root_dir: str, pattern: str, episode: str) -> str | None:
+    # Escape [ and ] because we don't want to glob character classes
+    pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
+    try:
+        matches = glob.glob(
+            episode + "/" + pattern,
+            root_dir=os.path.expanduser(root_dir),
+            recursive=False,
+        )
+        result = matches[0]
+    except Exception:
+        return None
+    return result
 
 
 # ─── Page 1: File Selection ───────────────────────────────────────────────────
@@ -270,7 +294,7 @@ class FileSelectionPage(QWidget):
 
         top_config = QGridLayout()
         top_config.setHorizontalSpacing(10)
-        top_config.setVerticalSpacing(10)
+        top_config.setVerticalSpacing(5)
 
         path_heading = QLabel("Project path")
         path_heading.setObjectName("subheading")
@@ -385,16 +409,44 @@ class FileSelectionPage(QWidget):
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
 
+MATCH_ID_ROLE = Qt.ItemDataRole.UserRole + 1
+
 
 class ResultTreeView(QTreeView):
+    play_line_id = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.copy_action = QAction("&Copy", self)
+        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        self.copy_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        self.copy_action.triggered.connect(self.copy_selection)
+        self.copy_action.setShortcutVisibleInContextMenu(True)
+        self.addAction(self.copy_action)
+
+        self.play_action = QAction("&Play", self)
+        self.play_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_P))
+        self.play_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        self.play_action.triggered.connect(self._play_line)
+        self.play_action.setShortcutVisibleInContextMenu(True)
+        self.addAction(self.play_action)
+
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        copy_action = QAction("&Copy", self)
-        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        copy_action.triggered.connect(self.copy_selection)
-        copy_action.setShortcutVisibleInContextMenu(True)
-        menu.addAction(copy_action)
+        menu.addAction(self.copy_action)
+        menu.addAction(self.play_action)
         menu.exec(event.globalPos())
+
+    def _play_line(self):
+        index = self.selectionModel().currentIndex()
+        if not index:
+            return
+        if index.model().hasChildren(index.siblingAtColumn(0)):
+            return
+
+        match_id = index.siblingAtColumn(0).data(MATCH_ID_ROLE)
+        self.play_line_id.emit(match_id)
 
     def copy_selection(self):
         index = self.selectionModel().currentIndex()
@@ -406,9 +458,6 @@ class ResultTreeView(QTreeView):
 
 
 class TreeSelectionModel(QItemSelectionModel):
-    def __init__(self, model, parent=None):
-        super().__init__(model, parent)
-
     def select(self, selection, command):
         # Normalize to a single index
         if isinstance(selection, QItemSelection):
@@ -468,24 +517,25 @@ class ResultItemDelegate(QStyledItemDelegate):
 
 
 class PolarsTreeModel(QStandardItemModel):
-    def __init__(self, empty_df, parent=None):
+    def __init__(self, empty_df, project_config, parent=None):
         super().__init__(parent)
         self._empty_df = empty_df
+        self._project_config = project_config
         self.set_dataframe(self._empty_df)
 
-    def _get_or_create_path(self, group: str) -> QStandardItem:
+    def _get_or_create_path(self, episode: str, row_width: int) -> QStandardItem:
         """
         Walk (and create if needed) the chain of items for each
         slash-separated segment, returning the deepest one.
         """
-        segments = group.split("/")
+        segments = episode.split("/")
         parent = self.invisibleRootItem()
 
         for segment in segments:
             item = self._find_child(parent, segment)
             if item is None:
                 item = QStandardItem(segment)
-                row = [item] + [QStandardItem() for _ in self._leaf_cols]
+                row = [item] + [QStandardItem() for _ in range(row_width - 1)]
                 parent.appendRow(row)
             parent = item
 
@@ -500,22 +550,24 @@ class PolarsTreeModel(QStandardItemModel):
         if df is None:
             df = self._empty_df
 
-        group_col = "episode"
-        self._leaf_cols = [c for c in df.columns if c != group_col]
-        headers = [group_col] + self._leaf_cols
-        headers[0] = "Episode"
-        headers[1] = "Timestamp"
+        episode_col = "episode"
+        headers = ["Episode", "Timestamp"] + self._project_config.get_track_names()
         self.setHorizontalHeaderLabels(headers)
 
-        for group in df[group_col].unique(maintain_order=True):
-            parent_item = self._get_or_create_path(str(group))
+        for episode in df[episode_col].unique(maintain_order=True):
+            parent_item = self._get_or_create_path(episode, len(headers))
 
             for df_row in (
-                df.filter(pl.col(group_col) == group)
-                .select(self._leaf_cols)
+                df.filter(pl.col(episode_col) == episode)
+                .select(
+                    ["match_id", "timestamp"] + self._project_config.get_track_names()
+                )
                 .iter_rows()
             ):
-                child_row = [QStandardItem()] + [QStandardItem(v) for v in df_row]
+                match_id, *row = df_row
+                head_item = QStandardItem()
+                head_item.setData(match_id, MATCH_ID_ROLE)
+                child_row = [head_item] + [QStandardItem(v) for v in row]
                 parent_item.appendRow(child_row)
         self.endResetModel()
         self.layoutChanged.emit()
@@ -621,7 +673,7 @@ class SearchPage(QWidget):
             empty_model_data[name] = []
         empty_df = pl.DataFrame(empty_model_data)
 
-        self._model = PolarsTreeModel(empty_df)
+        self._model = PolarsTreeModel(empty_df, self._config)
         self._model.modelReset.connect(self._apply_column_sizing)
         self.tree = ResultTreeView()
         self.tree.setItemDelegate(ResultItemDelegate())
@@ -642,6 +694,10 @@ class SearchPage(QWidget):
 
         QTimer.singleShot(0, self._search_box.setFocus)
 
+        self.tree.play_line_id.connect(
+            self._play_line_id, type=Qt.ConnectionType.QueuedConnection
+        )
+
     def _apply_column_sizing(self):
         episode_doc = QTextDocument()
         episode_doc.setHtml("Episode")
@@ -657,6 +713,59 @@ class SearchPage(QWidget):
         time_doc.setHtml("Timestamp")
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.tree.setColumnWidth(1, int(time_doc.idealWidth()) + 16)
+
+    def _play_line_id(self, match_id):
+        if not self._config.video_pattern:
+            return
+        self.tree.play_action.setEnabled(False)
+        row = self._event_df.filter(pl.col("id") == match_id).head(1)
+        episode = row["episode"].item()
+        context_range = self.context_box.value()
+        if context_range > 0:
+            episode_ids = self._event_df.filter(pl.col("episode") == episode)["id"]
+            start_id = max(int(match_id) - self.context_box.value(), episode_ids.min())
+            end_id = min(int(match_id) + self.context_box.value(), episode_ids.max())
+        else:
+            start_id = match_id
+            end_id = match_id
+        start_row = self._event_df.filter(pl.col("id") == start_id).head(1)
+        end_row = self._event_df.filter(pl.col("id") == end_id).head(1)
+        start = start_row["start"].item().total_seconds()
+        end = end_row["end"].item().total_seconds()
+        relative_video = resolve_episode_pattern(
+            self._config.path, self._config.video_pattern, episode
+        )
+
+        errorMessageBox = QMessageBox(self)
+        errorMessageBox.setText("Could not play selected line")
+        if relative_video is None:
+            errorMessageBox.setInformativeText(
+                f"Unable to find video: {episode + '/' + self._config.video_pattern}"
+            )
+            errorMessageBox.exec()
+        else:
+            absolute_video = os.path.abspath(
+                os.path.join(self._config.path, relative_video)
+            )
+            mpv_command = QSettings().value("prefs/mpv", "") or "mpv"
+            try:
+                subprocess.run(
+                    mpv_command.split(" ")
+                    + [
+                        f"--start={start}",
+                        f"--end={end}",
+                        "--keep-open=no",
+                        "--really-quiet",
+                        "--sub=no",
+                        absolute_video,
+                    ]
+                )
+            except FileNotFoundError:
+                errorMessageBox.setInformativeText(
+                    f"Unable to find command: {mpv_command}"
+                )
+                errorMessageBox.exec()
+        self.tree.play_action.setEnabled(True)
 
     def _run_search(self):
         query = self._search_box.text().strip()
@@ -840,7 +949,6 @@ class SearchPage(QWidget):
             )
             .update(overlap_pivot, on="match_id", how="full")
             .sort("match_id")
-            .drop("match_id")
         )
 
         try:
@@ -970,7 +1078,6 @@ class DataWorker(QThread):
                     return_dtype=pl.String,
                 )
             )
-            .drop(["start", "end"])
             .sort("id")
             .collect()
         )
@@ -980,6 +1087,39 @@ class DataWorker(QThread):
     def run(self):
         result = self._load_data()
         self.done.emit(result)
+
+
+class PreferencesWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Preferences")
+        self.resize(800, 600)
+        self.setMinimumSize(640, 480)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        root = QVBoxLayout()
+        central_widget.setLayout(root)
+
+        header = QLabel("SETTINGS")
+        header.setObjectName("heading")
+        root.addWidget(header)
+        root.addSpacing(10)
+
+        settings = QSettings()
+
+        mpv_label = QLabel("mpv path")
+        mpv_label.setObjectName("subheading")
+        root.addWidget(mpv_label)
+
+        mpv_path_box = QLineEdit(settings.value("prefs/mpv", ""))
+        mpv_path_box.setPlaceholderText("mpv")
+        mpv_path_box.textChanged.connect(
+            lambda text: settings.setValue("prefs/mpv", text)
+        )
+        root.addWidget(mpv_path_box)
+
+        root.addStretch(1)
 
 
 class MainWindow(QMainWindow):
@@ -1009,8 +1149,7 @@ class MainWindow(QMainWindow):
 
         self.close_action = QAction("&Close", self)
         self.close_action.setShortcut(QKeySequence.StandardKey.Close)
-        self.close_action.triggered.connect(self.close_search)
-        self.close_action.setEnabled(False)
+        self.close_action.triggered.connect(self._close_action)
         file_menu.addAction(self.close_action)
 
         edit_menu = menu.addMenu("&Edit")
@@ -1028,6 +1167,12 @@ class MainWindow(QMainWindow):
         self.confirm_action.triggered.connect(self._selection_page.confirm)
         edit_menu.addAction(self.confirm_action)
 
+        prefs_action = QAction("Preferences…", self)
+        prefs_action.setShortcut(QKeySequence.StandardKey.Preferences)
+        prefs_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        prefs_action.triggered.connect(self._open_preferences)
+        edit_menu.addAction(prefs_action)
+
         help_menu = menu.addMenu("&Help")
 
         about_action = QAction(f"About {QApplication.applicationName()}", self)
@@ -1036,6 +1181,14 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
         self._stack.addWidget(self._selection_page)
+
+    def _open_preferences(self):
+        if not hasattr(self, "_prefs_window") or not self._prefs_window.isVisible():
+            self._prefs_window = PreferencesWindow()
+
+        self._prefs_window.show()
+        self._prefs_window.raise_()
+        self._prefs_window.activateWindow()
 
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
@@ -1051,17 +1204,24 @@ class MainWindow(QMainWindow):
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
 
-    def close_search(self):
-        while self._stack.count() > 1:
+    def _close_action(self):
+        if hasattr(self, "_prefs_window") and self._prefs_window.isVisible():
+            self._prefs_window.close()
+        elif self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
-        self.close_action.setEnabled(False)
-        self.confirm_action.setEnabled(True)
-        self._selection_page.update_config(self.project_config)
-        self._selection_page.confirm_btn.setText("Confirm  →")
+        else:
+            QApplication.quit()
+
+        if self._stack.count() == 1:
+            self.confirm_action.setEnabled(True)
+            self._selection_page.confirm_btn.setText("Confirm  →")
 
     def load_project_config(self, file):
         self.project_config = ProjectConfig.from_file(file)
-        self.close_search()
+        self._selection_page.update_config(self.project_config)
+        self._close_action()
+        while self._stack.count() > 1:
+            self._stack.removeWidget(self._stack.currentWidget())
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
