@@ -304,7 +304,9 @@ class FileSelectionPage(QWidget):
         self.project_path.setPlaceholderText("/path/to/your/project/")
         self.project_path.setFixedHeight(32)
         self.project_path.textChanged.connect(self._debounce.start)
-        top_config.addWidget(self.project_path, 1, 0)
+        top_config.addWidget(
+            self.project_path, 1, 0, alignment=Qt.AlignmentFlag.AlignTop
+        )
 
         max_ep_label = QLabel("Maximum episode")
         max_ep_label.setObjectName("subheading")
@@ -314,7 +316,21 @@ class FileSelectionPage(QWidget):
         self.max_ep.setPlaceholderText("Applies to any purely numeric episode path")
         self.max_ep.setFixedHeight(32)
         self.max_ep.textChanged.connect(self._debounce.start)
-        top_config.addWidget(self.max_ep, 1, 1)
+        top_config.addWidget(self.max_ep, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+
+        video_heading = QLabel("Video pattern")
+        video_heading.setObjectName("subheading")
+        top_config.addWidget(video_heading, 2, 0)
+
+        self.video_edit_box = QLineEdit(self.project_config.video_pattern)
+        self.video_edit_box.setPlaceholderText("ShowName *.mkv")
+        self.video_edit_box.setFixedHeight(32)
+        self.video_edit_box.textChanged.connect(self._debounce.start)
+        top_config.addWidget(
+            self.video_edit_box, 3, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignTop
+        )
+
+        top_config.setRowMinimumHeight(1, 42)
 
         root.addLayout(top_config)
         root.addSpacing(15)
@@ -370,7 +386,7 @@ class FileSelectionPage(QWidget):
             self._add_row(track=track)
         self.confirm_btn.setEnabled(len(self._rows) > 0)
 
-    def _add_row(self, track=SubTrack()):
+    def _add_row(self, checked=False, track=SubTrack()):
         row = PathRowWidget(
             self.project_config,
             track=track,
@@ -393,6 +409,7 @@ class FileSelectionPage(QWidget):
     def _update_project_config(self):
         self.project_config.path = self.project_path.text().strip()
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
+        self.project_config.video_pattern = self.video_edit_box.text().strip()
         for row in self._rows:
             row.update_preview()
 
@@ -401,6 +418,7 @@ class FileSelectionPage(QWidget):
         self.confirm_btn.setEnabled(False)
         self.project_config.path = self.project_path.text().strip()
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
+        self.project_config.video_pattern = self.video_edit_box.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
             self.project_config.tracks.append(row.get_track_info())
@@ -1036,9 +1054,13 @@ class DataWorker(QThread):
                 "end": pl.Duration("ms"),
                 "text": pl.String,
                 "line_index": pl.Int32,
-                "episode": pl.Categorical,
+                "episode": pl.Categorical(
+                    pl.Categories(name="episode", physical=pl.UInt16)
+                ),
                 "track": pl.Enum(self.project_config.get_track_names()),
-                "actor": pl.Categorical,
+                "actor": pl.Categorical(
+                    pl.Categories(name="actor", physical=pl.UInt16)
+                ),
                 "is_comment": pl.Boolean,
                 "sub_source": pl.Enum(SubtitleSource),
                 "comments_on": pl.Boolean,
@@ -1056,7 +1078,7 @@ class DataWorker(QThread):
                 & (pl.col("start") <= pl.col("end_right"))
                 & (pl.col("start_right") <= pl.col("end"))
             )
-            .select(pl.all().name.replace(r"(.+)_right", "overlap_$1"))
+            .select(pl.all().name.replace(r"^(.+)_right$", "overlap_$1"))
             .drop(
                 [
                     "overlap_start",
@@ -1276,6 +1298,8 @@ def main():
         app.setApplicationVersion(version)
     else:
         app.setApplicationVersion("0.0.0-dev")
+
+    pl.Config.set_engine_affinity("streaming")
 
     theme_path = Path(__file__).resolve().with_name("theme.toml")
     with open(theme_path, "rb") as f:
