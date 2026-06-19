@@ -302,6 +302,7 @@ class FileSelectionPage(QWidget):
 
         self.project_path = QLineEdit(self.project_config.path)
         self.project_path.setPlaceholderText("/path/to/your/project/")
+        self.project_path.setToolTip("The root folder in which to search for files.")
         self.project_path.setFixedHeight(32)
         self.project_path.textChanged.connect(self._debounce.start)
         top_config.addWidget(
@@ -314,6 +315,9 @@ class FileSelectionPage(QWidget):
 
         self.max_ep = QLineEdit(str(self.project_config.max_ep or ""))
         self.max_ep.setPlaceholderText("Applies to any purely numeric episode path")
+        self.max_ep.setToolTip(
+            "Exclude any episode path that can be parsed as a number and is above this value."
+        )
         self.max_ep.setFixedHeight(32)
         self.max_ep.textChanged.connect(self._debounce.start)
         top_config.addWidget(self.max_ep, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
@@ -324,6 +328,9 @@ class FileSelectionPage(QWidget):
 
         self.video_edit_box = QLineEdit(self.project_config.video_pattern)
         self.video_edit_box.setPlaceholderText("ShowName *.mkv")
+        self.video_edit_box.setToolTip(
+            "Pattern for video files to use when playing corresponding clips in search result. Must be in same folders as sub files."
+        )
         self.video_edit_box.setFixedHeight(32)
         self.video_edit_box.textChanged.connect(self._debounce.start)
         top_config.addWidget(
@@ -1241,9 +1248,12 @@ class MainWindow(QMainWindow):
     def load_project_config(self, file):
         self.project_config = ProjectConfig.from_file(file)
         self._selection_page.update_config(self.project_config)
-        self._close_action()
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
+
+        if self._stack.count() == 1:
+            self.confirm_action.setEnabled(True)
+            self._selection_page.confirm_btn.setText("Confirm  →")
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
