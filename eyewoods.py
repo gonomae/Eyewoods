@@ -166,6 +166,23 @@ def resolve_episode_pattern(root_dir: str, pattern: str, episode: str) -> str | 
     return result
 
 
+def setFilePreview(label: QLabel, pattern: str, project_config: ProjectConfig):
+    if not pattern:
+        label.setText("")
+        return
+    files = resolve_pattern(project_config.path, pattern, project_config.max_ep)
+    if not files:
+        label.setStyleSheet("color: #e05c5c;")
+        label.setText("  ✗ no files matched")
+    else:
+        label.setStyleSheet("color: #4ecb71;")
+        shown = files[:4]
+        text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
+        if len(files) > 4:
+            text += f"  … +{len(files) - 4} more"
+        label.setText(f"{text}   ({len(files)} file{'s' if len(files) != 1 else ''})")
+
+
 # ─── Page 1: File Selection ───────────────────────────────────────────────────
 
 
@@ -224,28 +241,9 @@ class PathRowWidget(QWidget):
         self.preview.setWordWrap(True)
         layout.addWidget(self.preview)
 
-        self.update_preview()
-
     def update_preview(self):
         pattern = self.file_line.text().strip()
-        if not pattern:
-            self.preview.setText("")
-            return
-        files = resolve_pattern(
-            self.project_config.path, pattern, self.project_config.max_ep
-        )
-        if not files:
-            self.preview.setStyleSheet("color: #e05c5c;")
-            self.preview.setText("  ✗ no files matched")
-        else:
-            self.preview.setStyleSheet("color: #4ecb71;")
-            shown = files[:4]
-            text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
-            if len(files) > 4:
-                text += f"  … +{len(files) - 4} more"
-            self.preview.setText(
-                f"{text}   ({len(files)} file{'s' if len(files) != 1 else ''})"
-            )
+        setFilePreview(self.preview, pattern, self.project_config)
 
     def get_track_info(self):
         self.track = self.track._replace(
@@ -321,6 +319,7 @@ class FileSelectionPage(QWidget):
         self.max_ep.setFixedHeight(32)
         self.max_ep.textChanged.connect(self._debounce.start)
         top_config.addWidget(self.max_ep, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        top_config.setRowMinimumHeight(1, 42)
 
         video_heading = QLabel("Video pattern")
         video_heading.setObjectName("subheading")
@@ -337,7 +336,11 @@ class FileSelectionPage(QWidget):
             self.video_edit_box, 3, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignTop
         )
 
-        top_config.setRowMinimumHeight(1, 42)
+        self.video_file_preview = QLabel()
+        self.video_file_preview.setWordWrap(True)
+        top_config.addWidget(
+            self.video_file_preview, 4, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignTop
+        )
 
         root.addLayout(top_config)
         root.addSpacing(15)
@@ -380,11 +383,13 @@ class FileSelectionPage(QWidget):
 
         for track in self.project_config.tracks:
             self._add_row(track=track)
+        self.update_previews()
 
-    def update_config(self, config):
+    def set_config(self, config):
         self.project_config = config
         self.project_path.setText(self.project_config.path)
         self.max_ep.setText(str(self.project_config.max_ep or ""))
+        self.video_edit_box.setText(self.project_config.video_pattern)
         for row in self._rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
@@ -413,12 +418,20 @@ class FileSelectionPage(QWidget):
         if len(self._rows) == 0:
             self.confirm_btn.setEnabled(False)
 
+    def update_previews(self):
+        setFilePreview(
+            self.video_file_preview,
+            self.project_config.video_pattern,
+            self.project_config,
+        )
+        for row in self._rows:
+            row.update_preview()
+
     def _update_project_config(self):
         self.project_config.path = self.project_path.text().strip()
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
         self.project_config.video_pattern = self.video_edit_box.text().strip()
-        for row in self._rows:
-            row.update_preview()
+        self.update_previews()
 
     def confirm(self):
         self.confirm_btn.setText("Loading…")
@@ -1247,7 +1260,7 @@ class MainWindow(QMainWindow):
 
     def load_project_config(self, file):
         self.project_config = ProjectConfig.from_file(file)
-        self._selection_page.update_config(self.project_config)
+        self._selection_page.set_config(self.project_config)
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
 
