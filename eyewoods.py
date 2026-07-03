@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QTreeView,
     QToolButton,
     QSpinBox,
+    QCheckBox,
 )
 from PySide6.QtCore import (
     Qt,
@@ -1141,6 +1142,7 @@ class PreferencesWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         root = QVBoxLayout()
+        root.setContentsMargins(20, 20, 20, 20)
         central_widget.setLayout(root)
 
         header = QLabel("SETTINGS")
@@ -1160,6 +1162,18 @@ class PreferencesWindow(QMainWindow):
             lambda text: settings.setValue("prefs/mpv", text)
         )
         root.addWidget(mpv_path_box)
+        root.addSpacing(5)
+
+        auto_load_checkbox = QCheckBox(
+            "Immediately load subs when opening a config file"
+        )
+        auto_load_checkbox.setChecked(settings.value("prefs/auto_load", False))
+        auto_load_checkbox.checkStateChanged.connect(
+            lambda state: settings.setValue(
+                "prefs/auto_load", state == Qt.CheckState.Checked
+            )
+        )
+        root.addWidget(auto_load_checkbox)
 
         root.addStretch(1)
 
@@ -1267,6 +1281,9 @@ class MainWindow(QMainWindow):
         if self._stack.count() == 1:
             self.confirm_action.setEnabled(True)
             self._selection_page.confirm_btn.setText("Confirm  →")
+
+        if self.settings.value("prefs/auto_load", False):
+            self._selection_page.confirm()
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
