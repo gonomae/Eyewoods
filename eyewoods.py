@@ -737,6 +737,15 @@ class SearchPage(QWidget):
             self._play_line_id, type=Qt.ConnectionType.QueuedConnection
         )
 
+    def _set_event_df(self, event_df):
+        self._event_df = event_df
+        self._run_search()
+
+    def reload_event_df(self):
+        self.worker = DataWorker(self._project_config)
+        self.worker.done.connect(self._set_event_df)
+        self.worker.start()
+
     def _apply_column_sizing(self):
         episode_doc = QTextDocument()
         episode_doc.setHtml("Episode")
@@ -752,6 +761,14 @@ class SearchPage(QWidget):
         time_doc.setHtml("Timestamp")
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.tree.setColumnWidth(1, int(time_doc.idealWidth()) + 16)
+
+    def closeEvent(self, event):
+        try:
+            self.worker.quit()
+            self.worker.wait()
+        except AttributeError:
+            pass
+        super().closeEvent(event)
 
     def _play_line_id(self, match_id):
         if not self._project_config.video_pattern:
@@ -1194,6 +1211,11 @@ class MainWindow(QMainWindow):
         self._selection_page = FileSelectionPage(self.project_config)
         self._selection_page.confirm_requested.connect(self._on_confirm)
 
+        self._setup_menu_bar()
+
+        self._stack.addWidget(self._selection_page)
+
+    def _setup_menu_bar(self):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
@@ -1207,6 +1229,10 @@ class MainWindow(QMainWindow):
         self.close_action.setShortcut(QKeySequence.StandardKey.Close)
         self.close_action.triggered.connect(self._close_action)
         file_menu.addAction(self.close_action)
+
+        self.reload_action = QAction("&Reload", self)
+        self.reload_action.setShortcut(Qt.Modifier.CTRL | Qt.Key.Key_R)
+        file_menu.addAction(self.reload_action)
 
         edit_menu = menu.addMenu("&Edit")
 
@@ -1236,8 +1262,6 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-        self._stack.addWidget(self._selection_page)
-
     def _open_preferences(self):
         if not hasattr(self, "_prefs_window") or not self._prefs_window.isVisible():
             self._prefs_window = PreferencesWindow()
@@ -1249,10 +1273,11 @@ class MainWindow(QMainWindow):
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
         self.copy_action.triggered.connect(search_page.tree.copy_selection)
+        self.reload_action.triggered.connect(search_page.reload_event_df)
 
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
-        self.close_action.setEnabled(True)
+        self.reload_action.setEnabled(True)
 
     def _on_confirm(self):
         self.confirm_action.setEnabled(False)
@@ -1269,6 +1294,7 @@ class MainWindow(QMainWindow):
             QApplication.quit()
 
         if self._stack.count() == 1:
+            self.reload_action.setEnabled(False)
             self.confirm_action.setEnabled(True)
             self._selection_page.confirm_btn.setText("Confirm  →")
 
