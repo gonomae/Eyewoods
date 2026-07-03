@@ -624,7 +624,7 @@ class PolarsTreeModel(QStandardItemModel):
 class SearchPage(QWidget):
     def __init__(self, project_config, event_df, parent=None):
         super().__init__(parent)
-        self._config = project_config
+        self._project_config = project_config
         self._event_df = event_df
 
         root = QVBoxLayout(self)
@@ -708,11 +708,11 @@ class SearchPage(QWidget):
         root.addSpacing(20)
 
         empty_model_data = {"episode": [], "timestamp": []}
-        for name in self._config.get_track_names():
+        for name in self._project_config.get_track_names():
             empty_model_data[name] = []
         empty_df = pl.DataFrame(empty_model_data)
 
-        self._model = PolarsTreeModel(empty_df, self._config)
+        self._model = PolarsTreeModel(empty_df, self._project_config)
         self._model.modelReset.connect(self._apply_column_sizing)
         self.tree = ResultTreeView()
         self.tree.setItemDelegate(ResultItemDelegate())
@@ -754,7 +754,7 @@ class SearchPage(QWidget):
         self.tree.setColumnWidth(1, int(time_doc.idealWidth()) + 16)
 
     def _play_line_id(self, match_id):
-        if not self._config.video_pattern:
+        if not self._project_config.video_pattern:
             return
         self.tree.play_action.setEnabled(False)
         row = self._event_df.filter(pl.col("id") == match_id).head(1)
@@ -772,19 +772,19 @@ class SearchPage(QWidget):
         start = start_row["start"].item().total_seconds()
         end = end_row["end"].item().total_seconds()
         relative_video = resolve_episode_pattern(
-            self._config.path, self._config.video_pattern, episode
+            self._project_config.path, self._project_config.video_pattern, episode
         )
 
         errorMessageBox = QMessageBox(self)
         errorMessageBox.setText("Could not play selected line")
         if relative_video is None:
             errorMessageBox.setInformativeText(
-                f"Unable to find video: {episode + '/' + self._config.video_pattern}"
+                f"Unable to find video: {episode + '/' + self._project_config.video_pattern}"
             )
             errorMessageBox.exec()
         else:
             absolute_video = os.path.abspath(
-                os.path.join(self._config.path, relative_video)
+                os.path.join(self._project_config.path, relative_video)
             )
             mpv_command = QSettings().value("prefs/mpv", "") or "mpv"
             try:
@@ -955,7 +955,7 @@ class SearchPage(QWidget):
             .agg(pl.col("text").str.join("<br/>"), pl.col("track").first())
             .pivot(
                 "track",
-                on_columns=self._config.get_track_names(),
+                on_columns=self._project_config.get_track_names(),
                 index=["match_id"],
                 values="text",
                 aggregate_function=None,
@@ -970,7 +970,7 @@ class SearchPage(QWidget):
             .agg(pl.col("overlap_text").str.join("<br/>"))
             .pivot(
                 "overlap_track",
-                on_columns=self._config.get_track_names(),
+                on_columns=self._project_config.get_track_names(),
                 index="match_id",
                 values="overlap_text",
                 aggregate_function=None,
