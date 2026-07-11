@@ -8,6 +8,7 @@ dependencies = [
     "polars>=1.41.2",
     "pyside6>=6.11.1",
     "srt>=3.5.3",
+    "tomli-w>=1.2.0",
 ]
 
 [dependency-groups]

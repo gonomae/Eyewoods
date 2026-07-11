@@ -6,12 +6,14 @@ import re
 import glob
 from pathlib import Path
 from enum import Enum
-from typing import NamedTuple
+import dataclasses
+from dataclasses import dataclass
 from datetime import timedelta
+import subprocess
 import ass
 import srt
 import tomllib
-import subprocess
+import tomli_w
 import polars as pl
 
 
@@ -72,25 +74,20 @@ class SubtitleSource(Enum):
     SRT = "srt"
 
 
-class SubTrack(NamedTuple):
+@dataclass
+class SubTrack:
     name: str = ""
-    pattern: str = ""
+    glob: str = ""
     comments_on: bool = True
     time_shift: float = 0
 
 
+@dataclass
 class ProjectConfig:
-    def __init__(
-        self,
-        path: str = "",
-        video_pattern: str = "",
-        max_ep: int | None = None,
-        tracks: list[SubTrack] = [],
-    ) -> None:
-        self.path = path
-        self.video_pattern = video_pattern
-        self.max_ep = max_ep
-        self.tracks = tracks
+    root_path: str = ""
+    video_glob: str = ""
+    max_ep: int | None = None
+    tracks: list[SubTrack] = dataclasses.field(default_factory=list)
 
     @classmethod
     def from_file(cls, file):
@@ -98,20 +95,20 @@ class ProjectConfig:
             config_dict = tomllib.load(f)
         os.chdir(os.path.dirname(os.path.abspath(file)))
         root_path = config_dict.get("root_path", "")
-        video_pattern = config_dict.get("video_glob", "")
+        video_glob = config_dict.get("video_glob", "")
         max_ep = config_dict.get("max_ep", None)
         tracks = config_dict.get("tracks", [])
         tracks = [
             SubTrack(
                 name=track.get("name", ""),
-                pattern=track.get("glob", ""),
+                glob=track.get("glob", ""),
                 comments_on=track.get("comments_on", True),
                 time_shift=track.get("time_shift", 0),
             )
             for track in tracks
         ]
         return cls(
-            path=root_path, video_pattern=video_pattern, max_ep=max_ep, tracks=tracks
+            root_path=root_path, video_glob=video_glob, max_ep=max_ep, tracks=tracks
         )
 
     def get_track_names(self) -> list:
@@ -171,7 +168,7 @@ def setFilePreview(label: QLabel, pattern: str, project_config: ProjectConfig):
     if not pattern:
         label.setText("")
         return
-    files = resolve_pattern(project_config.path, pattern, project_config.max_ep)
+    files = resolve_pattern(project_config.root_path, pattern, project_config.max_ep)
     if not files:
         label.setStyleSheet("color: #e05c5c;")
         label.setText("  ✗ no files matched")
@@ -209,7 +206,7 @@ class PathRowWidget(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
-        self.file_line = QLineEdit(self.track.pattern)
+        self.file_line = QLineEdit(self.track.glob)
         self.file_line.setPlaceholderText("ShowName * Dialogue.ass")
         self.file_line.setFixedHeight(TOP_HEIGHT)
         self.file_line.textChanged.connect(self._debounce.start)
@@ -247,9 +244,10 @@ class PathRowWidget(QWidget):
         setFilePreview(self.preview, pattern, self.project_config)
 
     def get_track_info(self):
-        self.track = self.track._replace(
+        self.track = dataclasses.replace(
+            self.track,
             name=self.track_name.text().strip(),
-            pattern=self.file_line.text().strip(),
+            glob=self.file_line.text().strip(),
             comments_on=self.comment_toggle.isChecked(),
         )
         return self.track
@@ -266,7 +264,7 @@ class FileSelectionPage(QWidget):
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(1000)
-        self._debounce.timeout.connect(self._update_project_config)
+        self._debounce.timeout.connect(self.update_project_config)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(32, 28, 32, 24)
@@ -299,7 +297,7 @@ class FileSelectionPage(QWidget):
         path_heading.setObjectName("subheading")
         top_config.addWidget(path_heading, 0, 0)
 
-        self.project_path = QLineEdit(self.project_config.path)
+        self.project_path = QLineEdit(self.project_config.root_path)
         self.project_path.setPlaceholderText("/path/to/your/project/")
         self.project_path.setToolTip("The root folder in which to search for files.")
         self.project_path.setFixedHeight(32)
@@ -326,7 +324,7 @@ class FileSelectionPage(QWidget):
         video_heading.setObjectName("subheading")
         top_config.addWidget(video_heading, 2, 0)
 
-        self.video_edit_box = QLineEdit(self.project_config.video_pattern)
+        self.video_edit_box = QLineEdit(self.project_config.video_glob)
         self.video_edit_box.setPlaceholderText("ShowName *.mkv")
         self.video_edit_box.setToolTip(
             "Pattern for video files to use when playing corresponding clips in search result. Must be in same folders as sub files."
@@ -388,9 +386,9 @@ class FileSelectionPage(QWidget):
 
     def set_config(self, config):
         self.project_config = config
-        self.project_path.setText(self.project_config.path)
+        self.project_path.setText(self.project_config.root_path)
         self.max_ep.setText(str(self.project_config.max_ep or ""))
-        self.video_edit_box.setText(self.project_config.video_pattern)
+        self.video_edit_box.setText(self.project_config.video_glob)
         for row in self._rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
@@ -422,27 +420,25 @@ class FileSelectionPage(QWidget):
     def update_previews(self):
         setFilePreview(
             self.video_file_preview,
-            self.project_config.video_pattern,
+            self.project_config.video_glob,
             self.project_config,
         )
         for row in self._rows:
             row.update_preview()
 
-    def _update_project_config(self):
-        self.project_config.path = self.project_path.text().strip()
+    def update_project_config(self):
+        self.project_config.root_path = self.project_path.text().strip()
         self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
-        self.project_config.video_pattern = self.video_edit_box.text().strip()
+        self.project_config.video_glob = self.video_edit_box.text().strip()
+        self.project_config.tracks = []
+        for row in self._rows:
+            self.project_config.tracks.append(row.get_track_info())
         self.update_previews()
 
     def confirm(self):
         self.confirm_btn.setText("Loading…")
         self.confirm_btn.setEnabled(False)
-        self.project_config.path = self.project_path.text().strip()
-        self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
-        self.project_config.video_pattern = self.video_edit_box.text().strip()
-        self.project_config.tracks = []
-        for row in self._rows:
-            self.project_config.tracks.append(row.get_track_info())
+        self.update_project_config()
         self.confirm_requested.emit()
 
 
@@ -771,7 +767,7 @@ class SearchPage(QWidget):
         super().closeEvent(event)
 
     def _play_line_id(self, match_id):
-        if not self._project_config.video_pattern:
+        if not self._project_config.video_glob:
             return
         self.tree.play_action.setEnabled(False)
         row = self._event_df.filter(pl.col("id") == match_id).head(1)
@@ -789,19 +785,19 @@ class SearchPage(QWidget):
         start = start_row["start"].item().total_seconds()
         end = end_row["end"].item().total_seconds()
         relative_video = resolve_episode_pattern(
-            self._project_config.path, self._project_config.video_pattern, episode
+            self._project_config.root_path, self._project_config.video_glob, episode
         )
 
         errorMessageBox = QMessageBox(self)
         errorMessageBox.setText("Could not play selected line")
         if relative_video is None:
             errorMessageBox.setInformativeText(
-                f"Unable to find video: {episode + '/' + self._project_config.video_pattern}"
+                f"Unable to find video: {episode + '/' + self._project_config.video_glob}"
             )
             errorMessageBox.exec()
         else:
             absolute_video = os.path.abspath(
-                os.path.join(self._project_config.path, relative_video)
+                os.path.join(self._project_config.root_path, relative_video)
             )
             mpv_command = QSettings().value("prefs/mpv", "") or "mpv"
             try:
@@ -1030,14 +1026,16 @@ class DataWorker(QThread):
         self.project_config = project_config
 
     def _load_data(self):
-        root_path = Path(os.path.expanduser(self.project_config.path))
+        root_path = Path(os.path.expanduser(self.project_config.root_path))
         all_events = []
         for i, track in enumerate(self.project_config.tracks):
             shift_delta = timedelta(seconds=track.time_shift)
             paths = [
                 Path(p)
                 for p in resolve_pattern(
-                    self.project_config.path, track.pattern, self.project_config.max_ep
+                    self.project_config.root_path,
+                    track.glob,
+                    self.project_config.max_ep,
                 )
             ]
             for path in paths:
@@ -1230,6 +1228,11 @@ class MainWindow(QMainWindow):
         self.close_action.triggered.connect(self._close_action)
         file_menu.addAction(self.close_action)
 
+        self.save_action = QAction("&Save", self)
+        self.save_action.setShortcut(QKeySequence.StandardKey.Save)
+        self.save_action.triggered.connect(self._save_action)
+        file_menu.addAction(self.save_action)
+
         self.reload_action = QAction("&Reload", self)
         self.reload_action.setShortcut(Qt.Modifier.CTRL | Qt.Key.Key_R)
         file_menu.addAction(self.reload_action)
@@ -1297,6 +1300,15 @@ class MainWindow(QMainWindow):
             self.reload_action.setEnabled(False)
             self.confirm_action.setEnabled(True)
             self._selection_page.confirm_btn.setText("Confirm  →")
+
+    def _save_action(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            dir="untitled", filter="Eyewoods Config File (*.eyewoods)"
+        )
+        if file_path:
+            self._selection_page.update_project_config()
+            with open(file_path, "wb") as f:
+                tomli_w.dump(dataclasses.asdict(self.project_config), f)
 
     def load_project_config(self, file):
         self.project_config = ProjectConfig.from_file(file)
