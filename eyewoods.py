@@ -1,68 +1,64 @@
-#!/usr/bin/env python3
-
-import sys
+import dataclasses
+import glob
 import os
 import re
-import glob
-from pathlib import Path
-from enum import Enum
-import dataclasses
+import subprocess
+import sys
+import tomllib
 from dataclasses import dataclass
 from datetime import timedelta
-import subprocess
+from enum import Enum
+from pathlib import Path
+
 import ass
-import srt
-import tomllib
-import tomli_w
 import polars as pl
-
-
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QStyledItemDelegate,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QLabel,
-    QPushButton,
-    QLineEdit,
-    QHeaderView,
-    QFileDialog,
-    QScrollArea,
-    QFrame,
-    QStyle,
-    QMenu,
-    QStackedWidget,
-    QMessageBox,
-    QStyleOptionViewItem,
-    QTreeView,
-    QToolButton,
-    QSpinBox,
-    QCheckBox,
-)
+import srt
+import tomli_w
 from PySide6.QtCore import (
-    Qt,
-    QTimer,
-    QSize,
     QEvent,
-    QThread,
-    Signal,
-    QSettings,
-    QItemSelectionModel,
     QItemSelection,
+    QItemSelectionModel,
+    QSettings,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
 )
 from PySide6.QtGui import (
-    QTextDocument,
-    QTextDocumentFragment,
     QAction,
     QKeySequence,
     QPainter,
-    QStandardItemModel,
     QStandardItem,
+    QStandardItemModel,
+    QTextDocument,
+    QTextDocumentFragment,
 )
-
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QToolButton,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
 
 QUERY_MATCH_TEXT = "#ef5f5f"
 COMMENT_TEXT = "rgba(255,255,255,0.3)"
@@ -139,7 +135,7 @@ def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
                 "**/" + pattern, root_dir=os.path.expanduser(root_dir), recursive=True
             )
         )
-    except Exception:
+    except OSError:
         return []
     return [
         p
@@ -159,7 +155,7 @@ def resolve_episode_pattern(root_dir: str, pattern: str, episode: str) -> str | 
             recursive=False,
         )
         result = matches[0]
-    except Exception:
+    except OSError:
         return None
     return result
 
@@ -394,7 +390,9 @@ class FileSelectionPage(QWidget):
             self._add_row(track=track)
         self.confirm_btn.setEnabled(len(self._rows) > 0)
 
-    def _add_row(self, checked=False, track=SubTrack()):
+    def _add_row(self, checked=False, track=None):
+        if not track:
+            track = SubTrack()
         row = PathRowWidget(
             self.project_config,
             track=track,
@@ -739,8 +737,7 @@ class SearchPage(QWidget):
         episode_width = episode_doc.idealWidth()
         for ep in self._event_df["episode"].unique():
             episode_doc.setHtml(ep)
-            if episode_doc.idealWidth() > episode_width:
-                episode_width = episode_doc.idealWidth()
+            episode_width = max(episode_width, episode_doc.idealWidth())
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.tree.setColumnWidth(0, int(episode_width) + 16)
 
@@ -801,7 +798,8 @@ class SearchPage(QWidget):
                         "--really-quiet",
                         "--sub=no",
                         absolute_video,
-                    ]
+                    ],
+                    check=False,
                 )
             except FileNotFoundError:
                 errorMessageBox.setInformativeText(
@@ -1069,10 +1067,10 @@ class DataWorker(QThread):
                                 )
                         else:
                             print(f"Unrecognized file type for {path}")
-                            pass
-                except Exception as err:
+                except OSError as err:
                     print(f"Exception {err=} trying to open {path}")
-                    pass
+                except ValueError as err:
+                    print(f"Exception {err=} trying to parse {path}")
 
         event_df = pl.LazyFrame(
             all_events,
