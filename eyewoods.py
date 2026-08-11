@@ -254,8 +254,6 @@ class PathRowWidget(QWidget):
 
 
 class FileSelectionPage(QWidget):
-    confirm_requested = Signal()
-
     def __init__(self, project_config, parent=None):
         super().__init__(parent)
         self._rows = []
@@ -375,7 +373,6 @@ class FileSelectionPage(QWidget):
         self.confirm_btn = QPushButton("Confirm  →")
         self.confirm_btn.setObjectName("primary")
         self.confirm_btn.setEnabled(False)
-        self.confirm_btn.clicked.connect(self.confirm)
         bar.addWidget(self.confirm_btn)
 
         root.addLayout(bar)
@@ -434,12 +431,6 @@ class FileSelectionPage(QWidget):
         for row in self._rows:
             self.project_config.tracks.append(row.get_track_info())
         self.update_previews()
-
-    def confirm(self):
-        self.confirm_btn.setText("Loading…")
-        self.confirm_btn.setEnabled(False)
-        self.update_project_config()
-        self.confirm_requested.emit()
 
 
 # ─── Page 2: Search ───────────────────────────────────────────────────────────
@@ -1203,13 +1194,14 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(640, 480)
 
         self._stack = QStackedWidget()
+        self._stack.currentChanged.connect(self._on_stack_changed)
         self.setCentralWidget(self._stack)
 
         self.project_config = project_config
-        self._selection_page = FileSelectionPage(self.project_config)
-        self._selection_page.confirm_requested.connect(self._on_confirm)
-
         self._setup_menu_bar()
+
+        self._selection_page = FileSelectionPage(self.project_config)
+        self._selection_page.confirm_btn.clicked.connect(self._on_confirm_selection)
 
         self._stack.addWidget(self._selection_page)
 
@@ -1249,7 +1241,7 @@ class MainWindow(QMainWindow):
         self.confirm_action.setShortcut(
             QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_Return)
         )
-        self.confirm_action.triggered.connect(self._selection_page.confirm)
+        self.confirm_action.triggered.connect(self._on_confirm_selection)
         edit_menu.addAction(self.confirm_action)
 
         prefs_action = QAction("Preferences…", self)
@@ -1273,6 +1265,13 @@ class MainWindow(QMainWindow):
         self._prefs_window.raise_()
         self._prefs_window.activateWindow()
 
+    def _on_stack_changed(self, index):
+        if self._stack.count() == 1:
+            self.reload_action.setEnabled(False)
+            self.confirm_action.setEnabled(True)
+            self._selection_page.confirm_btn.setEnabled(True)
+            self._selection_page.confirm_btn.setText("Confirm  →")
+
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
         self.copy_action.triggered.connect(search_page.tree.copy_selection)
@@ -1282,8 +1281,12 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(search_page)
         self.reload_action.setEnabled(True)
 
-    def _on_confirm(self):
+    def _on_confirm_selection(self):
         self.confirm_action.setEnabled(False)
+        self._selection_page.confirm_btn.setEnabled(False)
+        self._selection_page.confirm_btn.setText("Loading…")
+
+        self._selection_page.update_project_config()
         self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
@@ -1295,11 +1298,6 @@ class MainWindow(QMainWindow):
             self._stack.removeWidget(self._stack.currentWidget())
         else:
             QApplication.quit()
-
-        if self._stack.count() == 1:
-            self.reload_action.setEnabled(False)
-            self.confirm_action.setEnabled(True)
-            self._selection_page.confirm_btn.setText("Confirm  →")
 
     def _save_action(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1316,12 +1314,8 @@ class MainWindow(QMainWindow):
         while self._stack.count() > 1:
             self._stack.removeWidget(self._stack.currentWidget())
 
-        if self._stack.count() == 1:
-            self.confirm_action.setEnabled(True)
-            self._selection_page.confirm_btn.setText("Confirm  →")
-
         if self.settings.value("prefs/auto_load", False):
-            self._selection_page.confirm()
+            self._on_confirm_selection()
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
