@@ -289,7 +289,7 @@ class FileSelectionPage(QWidget):
         root.addSpacing(16)
 
         top_config = QGridLayout()
-        top_config.setHorizontalSpacing(10)
+        top_config.setHorizontalSpacing(0)
         top_config.setVerticalSpacing(5)
 
         path_heading = QLabel("Project path")
@@ -305,18 +305,6 @@ class FileSelectionPage(QWidget):
             self.project_path, 1, 0, alignment=Qt.AlignmentFlag.AlignTop
         )
 
-        max_ep_label = QLabel("Maximum episode")
-        max_ep_label.setObjectName("subheading")
-        top_config.addWidget(max_ep_label, 0, 1)
-
-        self.max_ep = QLineEdit(str(self.project_config.max_ep or ""))
-        self.max_ep.setPlaceholderText("Applies to any purely numeric episode path")
-        self.max_ep.setToolTip(
-            "Exclude any episode path that can be parsed as a number and is above this value."
-        )
-        self.max_ep.setFixedHeight(32)
-        self.max_ep.textChanged.connect(self._debounce.start)
-        top_config.addWidget(self.max_ep, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         top_config.setRowMinimumHeight(1, 42)
 
         video_heading = QLabel("Video pattern")
@@ -386,7 +374,6 @@ class FileSelectionPage(QWidget):
     def set_config(self, config):
         self.project_config = config
         self.project_path.setText(self.project_config.root_path)
-        self.max_ep.setText(str(self.project_config.max_ep or ""))
         self.video_edit_box.setText(self.project_config.video_glob)
         for row in self._rows:
             self._rows_layout.removeWidget(row)
@@ -429,7 +416,6 @@ class FileSelectionPage(QWidget):
 
     def update_project_config(self):
         self.project_config.root_path = self.project_path.text().strip()
-        self.project_config.max_ep = get_int_or(self.max_ep.text().strip(), None)
         self.project_config.video_glob = self.video_edit_box.text().strip()
         self.project_config.tracks = []
         for row in self._rows:
