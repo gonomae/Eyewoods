@@ -1290,11 +1290,14 @@ class MainWindow(QMainWindow):
             QApplication.quit()
 
     def _save_action(self):
+        self._selection_page.update_project_config()
         file_path, _ = QFileDialog.getSaveFileName(
-            dir="untitled", filter="Eyewoods Config File (*.eyewoods)"
+            dir=os.path.join(
+                os.path.expanduser(self.project_config.root_path), "untitled"
+            ),
+            filter="Eyewoods Config File (*.eyewoods)",
         )
         if file_path:
-            self._selection_page.update_project_config()
             with open(file_path, "wb") as f:
                 tomli_w.dump(dataclasses.asdict(self.project_config), f)
 
