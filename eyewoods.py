@@ -203,18 +203,23 @@ class PathRowWidget(QWidget):
         top.setSpacing(6)
         top.setContentsMargins(0, 0, 0, 0)
         self.file_line = QLineEdit(self.track.glob)
+        self.file_line.setToolTip(
+            "Pattern for matching a collection of subtitle files for one track."
+        )
         self.file_line.setPlaceholderText("ShowName * Dialogue.ass")
         self.file_line.setFixedHeight(TOP_HEIGHT)
         self.file_line.textChanged.connect(self._debounce.start)
         top.addWidget(self.file_line)
 
         self.track_name = QLineEdit(self.track.name)
+        self.track_name.setToolTip("Name for this subtitle track.")
         self.track_name.setPlaceholderText("Track Name")
         self.track_name.setFixedHeight(TOP_HEIGHT)
         self.track_name.setFixedWidth(130)
         top.addWidget(self.track_name)
 
         self.comment_toggle = QAction("{\\t}")
+        self.comment_toggle.setToolTip("Show comments in results if enabled.")
         self.comment_toggle.setCheckable(True)
         self.comment_toggle.setChecked(self.track.comments_on)
         comment_btn = QToolButton()
@@ -338,7 +343,7 @@ class FileSelectionPage(QWidget):
         root.addLayout(top_config)
         root.addSpacing(15)
 
-        track_heading = QLabel("Track files")
+        track_heading = QLabel("Subtitle track files")
         track_heading.setObjectName("subheading")
         root.addWidget(track_heading)
         root.addSpacing(5)
@@ -354,15 +359,16 @@ class FileSelectionPage(QWidget):
         self._rows_layout.addStretch()
 
         scroll.setWidget(self._rows_container)
-        root.addWidget(scroll, 1)
+        root.addWidget(scroll)
+        root.addSpacing(16)
+
+        add_btn = QPushButton("＋  Add Subtitle Track")
+        add_btn.clicked.connect(self._add_row)
+        root.addWidget(add_btn)
         root.addSpacing(16)
 
         bar = QHBoxLayout()
         bar.setSpacing(10)
-
-        add_btn = QPushButton("＋  Add Track")
-        add_btn.clicked.connect(self._add_row)
-        bar.addWidget(add_btn)
 
         bar.addStretch()
 
