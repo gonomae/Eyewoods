@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QTextEdit,
     QToolButton,
     QTreeView,
     QVBoxLayout,
@@ -531,6 +532,27 @@ class ResultItemDelegate(QStyledItemDelegate):
         doc.setTextWidth(col_width)
         return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
+    def createEditor(self, parent, option, index):
+        editor = QTextEdit(parent)
+        editor.setReadOnly(True)
+        editor.setAlignment(Qt.AlignmentFlag.AlignTop)
+        return editor
+
+    def setEditorData(self, editor, index):
+        docFrag = QTextDocumentFragment.fromHtml(index.data())
+        value = docFrag.toPlainText()
+        editor.setText(str(value) if value is not None else "")
+
+    def setModelData(self, editor, model, index):
+        pass
+
+    def updateEditorGeometry(self, editor, option, index):
+        border_width = 1
+        rect = option.rect.adjusted(
+            -border_width, -border_width, border_width, border_width
+        )
+        editor.setGeometry(rect)
+
 
 class PolarsTreeModel(QStandardItemModel):
     def __init__(self, empty_df, project_config, parent=None):
@@ -701,7 +723,11 @@ class SearchPage(QWidget):
         self.tree.header().setSectionsMovable(False)
         self.tree.setWordWrap(True)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
+        self.tree.setEditTriggers(
+            QTreeView.EditTrigger.DoubleClicked
+            | QTreeView.EditTrigger.SelectedClicked
+            | QTreeView.EditTrigger.EditKeyPressed
+        )
         self._apply_column_sizing()
         self.tree.setSortingEnabled(True)
         self.tree.setAlternatingRowColors(True)

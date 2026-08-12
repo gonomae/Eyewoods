@@ -139,8 +139,6 @@ QSpinBox:focus {{
 
 QTreeView {{
     alternate-background-color: {panel_bg};
-    border: none;
-    outline: 0;
 }}
 QTreeView::item:selected {{
     background-color: #382596;
@@ -149,3 +147,15 @@ QTreeView::item:selected:!active {{
     background-color: {border};
 }}
 
+
+QTextEdit {{
+    background-color: {card_bg};
+    border: 1px solid {accent};
+    border-radius: 2px;
+    color: {text_main};
+    selection-background-color: {accent};
+    selection-color: #fff;
+}}
+QTextEdit:focus {{
+    border-color: {accent};
+}}
