@@ -133,7 +133,9 @@ def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
     try:
         matches = sorted(
             glob.glob(
-                "**/" + pattern, root_dir=os.path.expanduser(root_dir), recursive=True
+                os.path.join("**", pattern),
+                root_dir=os.path.expanduser(root_dir),
+                recursive=True,
             )
         )
     except OSError:
@@ -151,7 +153,7 @@ def resolve_episode_pattern(root_dir: str, pattern: str, episode: str) -> str | 
     pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
     try:
         matches = glob.glob(
-            episode + "/" + pattern,
+            os.path.join(episode, pattern),
             root_dir=os.path.expanduser(root_dir),
             recursive=False,
         )
@@ -566,7 +568,7 @@ class PolarsTreeModel(QStandardItemModel):
         Walk (and create if needed) the chain of items for each
         slash-separated segment, returning the deepest one.
         """
-        segments = episode.split("/")
+        segments = episode.split(os.sep)
         parent = self.invisibleRootItem()
 
         for segment in segments:
