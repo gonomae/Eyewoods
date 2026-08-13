@@ -746,6 +746,10 @@ class SearchPage(QWidget):
         self._event_df = event_df
         self._run_search()
 
+    def modify_context(self, delta):
+        current_value = self.context_box.value()
+        self.context_box.setValue(current_value + delta)
+
     def reload_event_df(self):
         self.worker = DataWorker(self._project_config)
         self.worker.done.connect(self._set_event_df)
@@ -1262,6 +1266,16 @@ class MainWindow(QMainWindow):
         self.confirm_action.triggered.connect(self._on_confirm_selection)
         edit_menu.addAction(self.confirm_action)
 
+        self.increase_context_action = QAction("&Increase Context Lines", self)
+        self.increase_context_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
+        self.increase_context_action.setEnabled(False)
+        edit_menu.addAction(self.increase_context_action)
+
+        self.decrease_context_action = QAction("&Decrease Context Lines", self)
+        self.decrease_context_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
+        self.decrease_context_action.setEnabled(False)
+        edit_menu.addAction(self.decrease_context_action)
+
         prefs_action = QAction("Preferences…", self)
         prefs_action.setShortcut(QKeySequence.StandardKey.Preferences)
         prefs_action.setMenuRole(QAction.MenuRole.PreferencesRole)
@@ -1286,6 +1300,8 @@ class MainWindow(QMainWindow):
     def _on_stack_changed(self, index):
         if self._stack.count() == 1:
             self.reload_action.setEnabled(False)
+            self.increase_context_action.setEnabled(False)
+            self.decrease_context_action.setEnabled(False)
             self.confirm_action.setEnabled(True)
             self._selection_page.confirm_btn.setEnabled(True)
             self._selection_page.confirm_btn.setText("Confirm  →")
@@ -1294,10 +1310,18 @@ class MainWindow(QMainWindow):
         search_page = SearchPage(self.project_config, event_df)
         self.copy_action.triggered.connect(search_page.tree.copy_selection)
         self.reload_action.triggered.connect(search_page.reload_event_df)
+        self.increase_context_action.triggered.connect(
+            lambda: search_page.modify_context(1)
+        )
+        self.decrease_context_action.triggered.connect(
+            lambda: search_page.modify_context(-1)
+        )
 
         self._stack.addWidget(search_page)
         self._stack.setCurrentWidget(search_page)
         self.reload_action.setEnabled(True)
+        self.increase_context_action.setEnabled(True)
+        self.decrease_context_action.setEnabled(True)
 
     def _on_confirm_selection(self):
         self.confirm_action.setEnabled(False)
