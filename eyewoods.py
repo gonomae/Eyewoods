@@ -221,6 +221,13 @@ class PathRowWidget(QWidget):
         self.track_name.setFixedWidth(130)
         top.addWidget(self.track_name)
 
+        self.track_offset = QLineEdit(str(self.track.time_shift))
+        self.track_offset.setToolTip("Shift subtitle events by time given in seconds.")
+        self.track_offset.setPlaceholderText("Offset")
+        self.track_offset.setFixedHeight(TOP_HEIGHT)
+        self.track_offset.setFixedWidth(80)
+        top.addWidget(self.track_offset)
+
         self.comment_toggle = QAction("{\\t}")
         self.comment_toggle.setToolTip("Show comments in results if enabled.")
         self.comment_toggle.setCheckable(True)
@@ -248,10 +255,15 @@ class PathRowWidget(QWidget):
         setFilePreview(self.preview, pattern, self.project_config)
 
     def get_track_info(self):
+        try:
+            time_shift = float(self.track_offset.text().strip())
+        except ValueError:
+            time_shift = 0
         self.track = dataclasses.replace(
             self.track,
             name=self.track_name.text().strip(),
             glob=self.file_line.text().strip(),
+            time_shift=time_shift,
             comments_on=self.comment_toggle.isChecked(),
         )
         return self.track
