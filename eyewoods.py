@@ -759,7 +759,7 @@ class SearchPage(QWidget):
             episode_doc.setHtml(ep)
             episode_width = max(episode_width, episode_doc.idealWidth())
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(0, int(episode_width) + 16)
+        self.tree.setColumnWidth(0, int(episode_width) + 24)
 
         time_doc = QTextDocument()
         time_doc.setHtml("Timestamp")
