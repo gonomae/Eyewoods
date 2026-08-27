@@ -1,5 +1,4 @@
 import dataclasses
-import glob
 import os
 import re
 import subprocess
@@ -48,6 +47,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
@@ -83,7 +83,8 @@ class SubTrack:
 class ProjectConfig:
     root_path: str = ""
     video_glob: str = ""
-    max_ep: int | None = None
+    max_ep: int = 0
+    group_by_folder: bool = True
     tracks: list[SubTrack] = dataclasses.field(default_factory=list)
 
     @classmethod
@@ -93,7 +94,8 @@ class ProjectConfig:
         os.chdir(os.path.dirname(os.path.abspath(file)))
         root_path = config_dict.get("root_path", "")
         video_glob = config_dict.get("video_glob", "")
-        max_ep = config_dict.get("max_ep", None)
+        max_ep = config_dict.get("max_ep", 0)
+        group_by_folder = config_dict.get("group_by_folder", True)
         tracks = config_dict.get("tracks", [])
         tracks = [
             SubTrack(
@@ -105,7 +107,11 @@ class ProjectConfig:
             for track in tracks
         ]
         return cls(
-            root_path=root_path, video_glob=video_glob, max_ep=max_ep, tracks=tracks
+            root_path=root_path,
+            video_glob=video_glob,
+            max_ep=max_ep,
+            group_by_folder=group_by_folder,
+            tracks=tracks,
         )
 
     def get_track_names(self) -> list:
@@ -126,55 +132,73 @@ def get_int_or(value, default):
         return default
 
 
-def resolve_pattern(root_dir: str, pattern: str, max_ep: int) -> list:
+def resolve_pattern(project_config: ProjectConfig, pattern: str) -> list:
     """Return sorted list of files matched by pattern."""
     # Escape [ and ] because we don't want to glob character classes
-    pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
+    glob_pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
+    # Replace ## with * for globbing purposes
+    glob_pattern = glob_pattern.replace("##", "*")
+
+    # Convert glob into regex in order to find episode grouping
+    regex_pattern = re.escape(pattern) + "$"
+    regex_pattern = (
+        regex_pattern.replace(r"\?", ".").replace(r"\*", ".*").replace(r"\#\#", "(.*)")
+    )
+
     try:
-        matches = sorted(
-            glob.glob(
-                os.path.join("**", pattern),
-                root_dir=os.path.expanduser(root_dir),
-                recursive=True,
-            )
-        )
+        base_path = Path(project_config.root_path).expanduser()
+        matches = sorted(base_path.rglob(glob_pattern))
+        matches = [path for path in matches if path.is_file()]
+        for index, path in enumerate(matches):
+            if project_config.group_by_folder:
+                episode_group = str(path.parent)
+            else:
+                wildcard_match = re.search(regex_pattern, str(path))
+                episode_group = "/".join(wildcard_match.groups())
+            matches[index] = (path, episode_group)
+        matches = [
+            item
+            for item in matches
+            if project_config.max_ep == 0
+            or get_int_or(str(item[1]), -1) <= project_config.max_ep
+        ]
+        return matches
     except OSError:
         return []
-    return [
-        p
-        for p in matches
-        if os.path.isfile(os.path.join(os.path.expanduser(root_dir), p))
-        and (not max_ep or get_int_or(str(Path(p).parent), -1) <= max_ep)
-    ]
 
 
-def resolve_episode_pattern(root_dir: str, pattern: str, episode: str) -> str | None:
+def resolve_episode_pattern(
+    project_config: ProjectConfig, pattern: str, episode: str
+) -> str | None:
     # Escape [ and ] because we don't want to glob character classes
-    pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
+    glob_pattern = re.sub(r"([\[\]])", r"[\1]", pattern)
     try:
-        matches = glob.glob(
-            os.path.join(episode, pattern),
-            root_dir=os.path.expanduser(root_dir),
-            recursive=False,
-        )
-        result = matches[0]
+        base_path = Path(project_config.root_path).expanduser()
+        if project_config.group_by_folder:
+            glob_pattern = glob_pattern.replace("##", "*")
+            episode_pattern = os.path.join(episode, glob_pattern)
+        else:
+            episode_parts = episode.split("/")
+            episode_pattern = glob_pattern.replace("##", "{}").format(*episode_parts)
+        matches = sorted(base_path.rglob(episode_pattern))
+        return matches[0]
     except OSError:
         return None
-    return result
 
 
 def setFilePreview(label: QLabel, pattern: str, project_config: ProjectConfig):
     if not pattern:
         label.setText("")
         return
-    files = resolve_pattern(project_config.root_path, pattern, project_config.max_ep)
-    if not files:
+    matches = resolve_pattern(project_config, pattern)
+    if not matches:
         label.setStyleSheet("color: #e05c5c;")
         label.setText("  ✗ no files matched")
     else:
+        files = [f"{path.name!s} ({episode})" for (path, episode) in matches]
         label.setStyleSheet("color: #4ecb71;")
         shown = files[:4]
-        text = "  ✓ " + "  │  ".join(os.path.basename(p) for p in shown)
+        text = "  ✓ " + "  │  ".join(shown)
         if len(files) > 4:
             text += f"  … +{len(files) - 4} more"
         label.setText(f"{text}   ({len(files)} file{'s' if len(files) != 1 else ''})")
@@ -294,7 +318,7 @@ class FileSelectionPage(QWidget):
         hint_layout = QVBoxLayout(hint_frame)
         hint_layout.setContentsMargins(14, 10, 14, 10)
         hint = QLabel(
-            "<b>Wildcard syntax: </b><code>?</code> matches any character, <code>*</code> matches any number of characterrs in track file names"
+            "<b>Wildcard syntax: </b><code>?</code> matches any character, <code>*</code> or <code>##</code> matches any number of characters in track file names"
         )
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
@@ -302,6 +326,20 @@ class FileSelectionPage(QWidget):
         hint_layout.addWidget(hint)
         root.addWidget(hint_frame)
         root.addSpacing(16)
+
+        grouping_config = QHBoxLayout()
+        self.folder_radio = QRadioButton("Group files by folder")
+        self.folder_radio.setChecked(self.project_config.group_by_folder)
+        self.folder_radio.toggled.connect(self.update_project_config)
+        grouping_config.addWidget(self.folder_radio)
+        grouping_config.addSpacing(10)
+        wildcard_radio = QRadioButton("Group files by ##")
+        wildcard_radio.setChecked(not self.project_config.group_by_folder)
+        grouping_config.addWidget(wildcard_radio)
+        grouping_config.addStretch()
+
+        root.addLayout(grouping_config)
+        root.addSpacing(15)
 
         top_config = QGridLayout()
         top_config.setHorizontalSpacing(0)
@@ -430,6 +468,7 @@ class FileSelectionPage(QWidget):
             row.update_preview()
 
     def update_project_config(self):
+        self.project_config.group_by_folder = self.folder_radio.isChecked()
         self.project_config.root_path = self.project_path.text().strip()
         self.project_config.video_glob = self.video_edit_box.text().strip()
         self.project_config.tracks = []
@@ -580,7 +619,7 @@ class PolarsTreeModel(QStandardItemModel):
         Walk (and create if needed) the chain of items for each
         slash-separated segment, returning the deepest one.
         """
-        segments = episode.split(os.sep)
+        segments = re.split(f"[{re.escape(os.sep)}/]", episode)
         parent = self.invisibleRootItem()
 
         for segment in segments:
@@ -809,7 +848,7 @@ class SearchPage(QWidget):
         start = start_row["start"].item().total_seconds()
         end = end_row["end"].item().total_seconds()
         relative_video = resolve_episode_pattern(
-            self._project_config.root_path, self._project_config.video_glob, episode
+            self._project_config, self._project_config.video_glob, episode
         )
 
         errorMessageBox = QMessageBox(self)
@@ -820,9 +859,7 @@ class SearchPage(QWidget):
             )
             errorMessageBox.exec()
         else:
-            absolute_video = os.path.abspath(
-                os.path.join(self._project_config.root_path, relative_video)
-            )
+            absolute_video = relative_video.absolute()
             mpv_command = QSettings().value("prefs/mpv", "") or "mpv"
             try:
                 subprocess.run(
@@ -833,7 +870,7 @@ class SearchPage(QWidget):
                         "--keep-open=no",
                         "--really-quiet",
                         "--sub=no",
-                        absolute_video,
+                        str(absolute_video),
                     ],
                     check=False,
                 )
@@ -1055,16 +1092,10 @@ class DataWorker(QThread):
         all_events = []
         for i, track in enumerate(self.project_config.tracks):
             shift_delta = timedelta(seconds=track.time_shift)
-            paths = [
-                Path(p)
-                for p in resolve_pattern(
-                    self.project_config.root_path,
-                    track.glob,
-                    self.project_config.max_ep,
-                )
-            ]
-            for path in paths:
-                episode_path = str(path.parent)
+            files = resolve_pattern(self.project_config, track.glob)
+            for file in files:
+                path = file[0]
+                episode_group = file[1]
                 try:
                     with open(root_path / path, encoding="utf_8_sig") as f:
                         if path.suffix == ".ass":
@@ -1076,7 +1107,7 @@ class DataWorker(QThread):
                                         event.end + shift_delta,
                                         event.text,
                                         line_index,
-                                        episode_path,
+                                        episode_group,
                                         track.name,
                                         event.name,
                                         event.TYPE == "Comment",
@@ -1093,7 +1124,7 @@ class DataWorker(QThread):
                                         event.end + shift_delta,
                                         event.content,
                                         line_index,
-                                        episode_path,
+                                        episode_group,
                                         track.name,
                                         None,
                                         False,

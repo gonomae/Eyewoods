@@ -101,6 +101,39 @@ QLabel#hint {{
     font-size: 12px;
 }}
 
+QRadioButton {{
+    color: {text_main};
+    spacing: 8px;
+    background-color: transparent;
+    padding: 3px 0;
+}}
+QRadioButton::indicator {{
+    width: 15px;
+    height: 15px;
+    border-radius: 8px;
+    border: 1px solid {border};
+    background-color: {card_bg};
+}}
+QRadioButton::indicator:hover {{
+    border-color: {accent};
+    background-color: {accent_dim};
+}}
+QRadioButton::indicator:checked {{
+    border: 1px solid {accent};
+    background-color: {accent};
+}}
+QRadioButton::indicator:checked:hover {{
+    background-color: {accent};
+    border-color: {accent};
+}}
+QRadioButton::indicator:disabled {{
+    border-color: {text_dim};
+    background-color: {panel_bg};
+}}
+QRadioButton:disabled {{
+    color: {text_dim};
+}}
+
 QToolButton {{
     font-family: "Fira Code";
     background-color: {card_bg};
