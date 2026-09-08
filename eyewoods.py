@@ -75,7 +75,6 @@ class SubtitleSource(Enum):
 class SubTrack:
     name: str = ""
     glob: str = ""
-    comments_on: bool = True
     time_shift: float = 0
 
 
@@ -101,7 +100,6 @@ class ProjectConfig:
             SubTrack(
                 name=track.get("name", ""),
                 glob=track.get("glob", ""),
-                comments_on=track.get("comments_on", True),
                 time_shift=track.get("time_shift", 0),
             )
             for track in tracks
@@ -245,21 +243,15 @@ class PathRowWidget(QWidget):
         self.track_name.setFixedWidth(130)
         top.addWidget(self.track_name)
 
-        self.track_offset = QLineEdit(str(self.track.time_shift))
+        time_shift_string = (
+            str(self.track.time_shift) if self.track.time_shift > 0 else ""
+        )
+        self.track_offset = QLineEdit(time_shift_string)
         self.track_offset.setToolTip("Shift subtitle events by time given in seconds.")
         self.track_offset.setPlaceholderText("Offset")
         self.track_offset.setFixedHeight(TOP_HEIGHT)
         self.track_offset.setFixedWidth(80)
         top.addWidget(self.track_offset)
-
-        self.comment_toggle = QAction("{\\t}")
-        self.comment_toggle.setToolTip("Show comments in results if enabled.")
-        self.comment_toggle.setCheckable(True)
-        self.comment_toggle.setChecked(self.track.comments_on)
-        comment_btn = QToolButton()
-        comment_btn.setDefaultAction(self.comment_toggle)
-        comment_btn.setFixedSize(44, TOP_HEIGHT)
-        top.addWidget(comment_btn)
 
         remove_action = QAction("x")
         remove_action.triggered.connect(lambda: self.remove_requested.emit(self))
@@ -288,7 +280,6 @@ class PathRowWidget(QWidget):
             name=self.track_name.text().strip(),
             glob=self.file_line.text().strip(),
             time_shift=time_shift,
-            comments_on=self.comment_toggle.isChecked(),
         )
         return self.track
 
@@ -305,7 +296,7 @@ class FileSelectionPage(QWidget):
         self._debounce.timeout.connect(self.update_project_config)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(32, 28, 32, 24)
+        root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(0)
 
         hdr = QLabel("PROJECT CONFIGURATION")
@@ -680,7 +671,7 @@ class SearchPage(QWidget):
         self._event_df = event_df
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
+        root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(0)
 
         settings = QSettings()
@@ -944,10 +935,9 @@ class SearchPage(QWidget):
         )
 
         for prefix in ["", "overlap_"]:
-            # Remove comment lines where specified
-            matches_df = matches_df.remove(
-                pl.col(prefix + "is_comment") & ~pl.col(prefix + "comments_on")
-            )
+            # Remove comment lines if disabled
+            if not QSettings().value("prefs/comments_on", True):
+                matches_df = matches_df.remove(pl.col(prefix + "is_comment"))
             # Style comment lines
             matches_df = matches_df.with_columns(
                 pl.when(pl.col(prefix + "is_comment"))
@@ -974,20 +964,20 @@ class SearchPage(QWidget):
 
             # If search term doesn't contain curly braces
             if "{" not in query and "}" not in query:
-                # Remove ass comments where specified
-                matches_df = matches_df.with_columns(
-                    pl.when(
-                        (pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
-                        & ~pl.col(prefix + "comments_on")
-                    )
-                    .then(
-                        pl.col(prefix + "text").str.replace_all(
-                            r"(\{[^}]*?\})",
-                            "",
+                # Remove ass comments if disabled
+                if not QSettings().value("prefs/comments_on", True):
+                    matches_df = matches_df.with_columns(
+                        pl.when(
+                            pl.col(prefix + "sub_source") == SubtitleSource.ASS.value
                         )
+                        .then(
+                            pl.col(prefix + "text").str.replace_all(
+                                r"(\{[^}]*?\})",
+                                "",
+                            )
+                        )
+                        .otherwise(prefix + "text")
                     )
-                    .otherwise(prefix + "text")
-                )
 
                 # Style ass comment/tag blocks only i
                 matches_df = matches_df.with_columns(
@@ -1112,7 +1102,6 @@ class DataWorker(QThread):
                                         event.name,
                                         event.TYPE == "Comment",
                                         SubtitleSource.ASS.value,
-                                        track.comments_on,
                                     )
                                 )
                         elif path.suffix == ".srt":
@@ -1129,7 +1118,6 @@ class DataWorker(QThread):
                                         None,
                                         False,
                                         SubtitleSource.SRT.value,
-                                        track.comments_on,
                                     )
                                 )
                         else:
@@ -1155,7 +1143,6 @@ class DataWorker(QThread):
                 ),
                 "is_comment": pl.Boolean,
                 "sub_source": pl.Enum(SubtitleSource),
-                "comments_on": pl.Boolean,
             },
             orient="row",
         )
@@ -1245,6 +1232,16 @@ class PreferencesWindow(QMainWindow):
             )
         )
         root.addWidget(auto_load_checkbox)
+        root.addSpacing(5)
+
+        comments_checkbox = QCheckBox("Show comments in results")
+        comments_checkbox.setChecked(settings.value("prefs/comments_on", True))
+        comments_checkbox.checkStateChanged.connect(
+            lambda state: settings.setValue(
+                "prefs/comments_on", state == Qt.CheckState.Checked
+            )
+        )
+        root.addWidget(comments_checkbox)
 
         root.addStretch(1)
 
