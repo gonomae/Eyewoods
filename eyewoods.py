@@ -879,20 +879,42 @@ class SearchPage(QWidget):
             self._model.set_dataframe(None)
             return
 
-        # Modify query for search settings
-        query_with_settings = query
-        if not self.regex_toggle.isChecked():
-            query_with_settings = re.escape(query_with_settings)
-        if self.word_toggle.isChecked():
-            query_with_settings = r"\b" + query_with_settings + r"\b"
-        query_with_settings = "(" + query_with_settings + ")"
-        if not self.case_toggle.isChecked():
-            query_with_settings = r"(?i)" + query_with_settings
+        event_df = self._event_df.lazy()
 
-        context_range = self.context_box.value()
+        for prefix in ["", "overlap_"]:
+            # If search term doesn't contain curly braces, optionally remove ass comments
+            if (
+                "{" not in query
+                and "}" not in query
+                and not QSettings().value("prefs/comments_on", True)
+            ):
+                event_df = event_df.with_columns(
+                    pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
+                    .then(
+                        pl.col(prefix + "text").str.replace_all(
+                            r"(\{[^}]*?\})",
+                            "",
+                        )
+                    )
+                    .otherwise(prefix + "text")
+                )
+
+            # Optionally hide ASS line breaks and non-breaking space characters
+            # \h and \n get replaced with a space, \N gets collapsed to a space along with adjacent whitespace
+            if not QSettings().value("prefs/linebreaks_on", False):
+                event_df = event_df.with_columns(
+                    pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
+                    .then(
+                        pl.col(prefix + "text").str.replace_all(
+                            r"(\\[nh]| *\\N *)",
+                            " ",
+                        )
+                    )
+                    .otherwise(prefix + "text")
+                )
 
         # Get the window of surrounding context lines
-        event_df = self._event_df.lazy()
+        context_range = self.context_box.value()
         rolling_groups = event_df.with_columns(pl.col("id").alias("match_id")).rolling(
             index_column="match_id",
             period=f"{context_range * 2 + 1}i",
@@ -906,6 +928,16 @@ class SearchPage(QWidget):
             ],
             how="horizontal",
         )
+
+        # Modify query for search settings
+        query_with_settings = query
+        if not self.regex_toggle.isChecked():
+            query_with_settings = re.escape(query_with_settings)
+        if self.word_toggle.isChecked():
+            query_with_settings = r"\b" + query_with_settings + r"\b"
+        query_with_settings = "(" + query_with_settings + ")"
+        if not self.case_toggle.isChecked():
+            query_with_settings = r"(?i)" + query_with_settings
 
         # Find matches
         matches_df = (
@@ -964,22 +996,7 @@ class SearchPage(QWidget):
 
             # If search term doesn't contain curly braces
             if "{" not in query and "}" not in query:
-                # Remove ass comments if disabled
-                if not QSettings().value("prefs/comments_on", True):
-                    matches_df = matches_df.with_columns(
-                        pl.when(
-                            pl.col(prefix + "sub_source") == SubtitleSource.ASS.value
-                        )
-                        .then(
-                            pl.col(prefix + "text").str.replace_all(
-                                r"(\{[^}]*?\})",
-                                "",
-                            )
-                        )
-                        .otherwise(prefix + "text")
-                    )
-
-                # Style ass comment/tag blocks only i
+                # Style ass comment/tag blocks
                 matches_df = matches_df.with_columns(
                     pl.when(pl.col(prefix + "sub_source") == SubtitleSource.ASS.value)
                     .then(
@@ -1220,8 +1237,8 @@ class PreferencesWindow(QMainWindow):
             lambda text: settings.setValue("prefs/mpv", text)
         )
         root.addWidget(mpv_path_box)
-        root.addSpacing(5)
 
+        root.addSpacing(5)
         auto_load_checkbox = QCheckBox(
             "Immediately load subs when opening a config file"
         )
@@ -1232,9 +1249,9 @@ class PreferencesWindow(QMainWindow):
             )
         )
         root.addWidget(auto_load_checkbox)
-        root.addSpacing(5)
 
-        comments_checkbox = QCheckBox("Show comments in results")
+        root.addSpacing(5)
+        comments_checkbox = QCheckBox("Display comments in results")
         comments_checkbox.setChecked(settings.value("prefs/comments_on", True))
         comments_checkbox.checkStateChanged.connect(
             lambda state: settings.setValue(
@@ -1242,6 +1259,18 @@ class PreferencesWindow(QMainWindow):
             )
         )
         root.addWidget(comments_checkbox)
+
+        root.addSpacing(5)
+        linebreaks_checkbox = QCheckBox(
+            "Display line break and non-breaking space characters in results"
+        )
+        linebreaks_checkbox.setChecked(settings.value("prefs/linebreaks_on", False))
+        linebreaks_checkbox.checkStateChanged.connect(
+            lambda state: settings.setValue(
+                "prefs/linebreaks_on", state == Qt.CheckState.Checked
+            )
+        )
+        root.addWidget(linebreaks_checkbox)
 
         root.addStretch(1)
 
