@@ -248,9 +248,9 @@ class PathRowWidget(QWidget):
         )
         self.track_offset = QLineEdit(time_shift_string)
         self.track_offset.setToolTip("Shift subtitle events by time given in seconds.")
-        self.track_offset.setPlaceholderText("Offset")
+        self.track_offset.setPlaceholderText("Offset (s)")
         self.track_offset.setFixedHeight(TOP_HEIGHT)
-        self.track_offset.setFixedWidth(80)
+        self.track_offset.setFixedWidth(85)
         top.addWidget(self.track_offset)
 
         remove_action = QAction("x")
@@ -479,13 +479,6 @@ class ResultTreeView(QTreeView):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.copy_action = QAction("&Copy", self)
-        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        self.copy_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
-        self.copy_action.triggered.connect(self.copy_selection)
-        self.copy_action.setShortcutVisibleInContextMenu(True)
-        self.addAction(self.copy_action)
-
         self.play_action = QAction("&Play", self)
         self.play_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_P))
         self.play_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
@@ -495,7 +488,6 @@ class ResultTreeView(QTreeView):
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.addAction(self.copy_action)
         menu.addAction(self.play_action)
         menu.exec(event.globalPos())
 
@@ -509,7 +501,7 @@ class ResultTreeView(QTreeView):
         match_id = index.siblingAtColumn(0).data(MATCH_ID_ROLE)
         self.play_line_id.emit(match_id)
 
-    def copy_selection(self):
+    def copy(self):
         index = self.selectionModel().currentIndex()
         if not index:
             return
@@ -579,6 +571,10 @@ class ResultItemDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         editor = QTextEdit(parent)
         editor.setReadOnly(True)
+        editor.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         editor.setAlignment(Qt.AlignmentFlag.AlignTop)
         return editor
 
@@ -1324,6 +1320,7 @@ class MainWindow(QMainWindow):
 
         self.copy_action = QAction("&Copy", self)
         self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        self.copy_action.triggered.connect(self._handle_copy)
         edit_menu.addAction(self.copy_action)
 
         edit_menu.addSeparator()
@@ -1377,7 +1374,6 @@ class MainWindow(QMainWindow):
 
     def _on_done_loading(self, event_df):
         search_page = SearchPage(self.project_config, event_df)
-        self.copy_action.triggered.connect(search_page.tree.copy_selection)
         self.reload_action.triggered.connect(search_page.reload_event_df)
         self.increase_context_action.triggered.connect(
             lambda: search_page.modify_context(1)
@@ -1401,6 +1397,11 @@ class MainWindow(QMainWindow):
         self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
         self.worker.start()
+
+    def _handle_copy(self):
+        widget = QApplication.focusWidget()
+        if widget is not None and hasattr(widget, "copy"):
+            widget.copy()
 
     def _close_action(self):
         if hasattr(self, "_prefs_window") and self._prefs_window.isVisible():
