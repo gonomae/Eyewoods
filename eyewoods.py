@@ -244,7 +244,7 @@ class PathRowWidget(QWidget):
         top.addWidget(self.track_name)
 
         time_shift_string = (
-            str(self.track.time_shift) if self.track.time_shift > 0 else ""
+            str(self.track.time_shift) if self.track.time_shift != 0 else ""
         )
         self.track_offset = QLineEdit(time_shift_string)
         self.track_offset.setToolTip("Shift subtitle events by time given in seconds.")
