@@ -1,6 +1,7 @@
 import dataclasses
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -850,7 +851,7 @@ class SearchPage(QWidget):
             mpv_command = QSettings().value("prefs/mpv", "") or "mpv"
             try:
                 subprocess.run(
-                    mpv_command.split(" ")
+                    shlex.split(mpv_command)
                     + [
                         f"--start={start}",
                         f"--end={end}",
