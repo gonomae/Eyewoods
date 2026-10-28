@@ -1076,6 +1076,7 @@ class SearchPage(QWidget):
             return
 
         self._model.set_dataframe(collected_df)
+        self.tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
 
         if collected_df.height < 100:
             self.tree.expandAll()
