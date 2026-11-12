@@ -1,7 +1,11 @@
 QWidget {{
     background-color: {dark_bg};
     color: {text_main};
-    font-size: 13px;
+    font-size: 13pt;
+}}
+
+QMenuBar {{
+    font-size: 9pt;
 }}
 
 QPushButton {{
@@ -86,19 +90,19 @@ QLabel {{
     background-color: transparent;
 }}
 QLabel#heading {{
-    font-size: 18px;
+    font-size: 18pt;
     font-weight: bold;
     color: {text_main};
-    letter-spacing: 0.5px;
+    letter-spacing: 0.5pt;
 }}
 QLabel#subheading {{
-    font-size: 11px;
+    font-size: 11pt;
     color: {text_dim};
-    letter-spacing: 1px;
+    letter-spacing: 1pt;
 }}
 QLabel#hint {{
     color: {text_dim};
-    font-size: 12px;
+    font-size: 12pt;
 }}
 
 QRadioButton {{
