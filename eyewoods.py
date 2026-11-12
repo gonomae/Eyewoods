@@ -1305,7 +1305,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(open_action)
 
         self.close_action = QAction("&Close", self)
-        self.close_action.setShortcut(QKeySequence.StandardKey.Close)
+        self.close_action.setShortcut(Qt.Modifier.CTRL | Qt.Key.Key_W)
         self.close_action.triggered.connect(self._close_action)
         file_menu.addAction(self.close_action)
 
