@@ -1087,12 +1087,15 @@ class SearchPage(QWidget):
 
 class DataWorker(QThread):
     done = Signal(object)
+    warning = Signal(object)
+    error = Signal(object)
 
     def __init__(self, project_config):
         super().__init__()
         self.project_config = project_config
 
     def _load_data(self):
+        error_title = "Encountered an issue while loading files."
         root_path = Path(os.path.expanduser(self.project_config.root_path))
         all_events = []
         for i, track in enumerate(self.project_config.tracks):
@@ -1136,11 +1139,19 @@ class DataWorker(QThread):
                                     )
                                 )
                         else:
-                            print(f"Unrecognized file type for {path}")
+                            self.warning.emit(
+                                (error_title, f"Unrecognized file type for {path}")
+                            )
                 except OSError as err:
-                    print(f"Exception {err=} trying to open {path}")
+                    self.error.emit(
+                        (error_title, f"Exception {err=} trying to open {path}")
+                    )
+                    return
                 except ValueError as err:
-                    print(f"Exception {err=} trying to parse {path}")
+                    self.error.emit(
+                        (error_title, f"Exception {err=} trying to parse {path}")
+                    )
+                    return
 
         event_df = pl.LazyFrame(
             all_events,
@@ -1198,11 +1209,10 @@ class DataWorker(QThread):
             .collect()
         )
 
-        return event_df
+        self.done.emit(event_df)
 
     def run(self):
-        result = self._load_data()
-        self.done.emit(result)
+        self._load_data()
 
 
 class PreferencesWindow(QMainWindow):
@@ -1365,7 +1375,13 @@ class MainWindow(QMainWindow):
         self._prefs_window.raise_()
         self._prefs_window.activateWindow()
 
-    def _on_stack_changed(self, index):
+    def _display_popup(self, contents):
+        message_box = QMessageBox(self)
+        message_box.setText(contents[0])
+        message_box.setInformativeText(contents[1])
+        message_box.exec()
+
+    def _on_stack_changed(self, index=0):
         if self._stack.count() == 1:
             self.reload_action.setEnabled(False)
             self.increase_context_action.setEnabled(False)
@@ -1390,6 +1406,10 @@ class MainWindow(QMainWindow):
         self.increase_context_action.setEnabled(True)
         self.decrease_context_action.setEnabled(True)
 
+    def _on_error_loading(self, error_message):
+        self._display_popup(error_message)
+        self._on_stack_changed()
+
     def _on_confirm_selection(self):
         self.confirm_action.setEnabled(False)
         self._selection_page.confirm_btn.setEnabled(False)
@@ -1398,6 +1418,8 @@ class MainWindow(QMainWindow):
         self._selection_page.update_project_config()
         self.worker = DataWorker(self.project_config)
         self.worker.done.connect(self._on_done_loading)
+        self.worker.warning.connect(self._display_popup)
+        self.worker.error.connect(self._on_error_loading)
         self.worker.start()
 
     def _handle_copy(self):
